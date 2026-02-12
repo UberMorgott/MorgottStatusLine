@@ -23,7 +23,7 @@
 | ⏱️ Блок 5ч | Лимит 5-часового блока подписки |
 | 📅 Неделя | Недельный лимит подписки |
 
-## Быстрая установка (одна команда)
+## Установка (одна команда)
 
 **Windows (PowerShell):**
 ```powershell
@@ -36,34 +36,12 @@ curl -fsSL https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/maste
 ```
 
 Скрипт автоматически:
-1. Установит пакет через npm
+1. Установит пакет с GitHub
 2. Создаст конфиг `~/.claude/claude-limitline.json`
 3. Настроит `~/.claude/settings.json`
+4. Перезапустите Claude Code — готово
 
 > Требуется [Node.js](https://nodejs.org) >= 18 и авторизация через `claude --login`
-
-## Ручная установка
-
-```bash
-npm install -g github:UberMorgott/MorgottStatusLine
-```
-
-Затем добавить в `~/.claude/settings.json`:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "morgott-statusline"
-  }
-}
-```
-
-И скопировать конфиг:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/master/config-example.json -o ~/.claude/claude-limitline.json
-```
 
 ## Конфигурация
 
