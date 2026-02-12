@@ -13,7 +13,7 @@
 
 ## Как выглядит
 
-![MorgottStatusLine Preview](preview.svg)
+![MorgottStatusLine Preview](preview.png)
 
 | Сегмент | Описание |
 |---------|----------|
