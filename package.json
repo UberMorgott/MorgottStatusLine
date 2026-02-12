@@ -1,0 +1,41 @@
+{
+  "name": "morgott-statusline",
+  "version": "1.0.0",
+  "description": "Claude Code statusline with subscription usage tracking, colored progress bars, and Russian localization. Based on claude-limitline.",
+  "main": "dist/index.js",
+  "bin": {
+    "morgott-statusline": "dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UberMorgott/MorgottStatusLine.git"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "statusline",
+    "powerline",
+    "usage",
+    "monitoring",
+    "cli",
+    "anthropic",
+    "subscription",
+    "max-plan"
+  ],
+  "author": "UberMorgott",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/UberMorgott/MorgottStatusLine/issues"
+  },
+  "homepage": "https://github.com/UberMorgott/MorgottStatusLine#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist"
+  ]
+}

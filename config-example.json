@@ -1,0 +1,40 @@
+{
+  "display": {
+    "style": "powerline",
+    "useNerdFonts": true,
+    "compactMode": "never",
+    "compactWidth": 80
+  },
+  "directory": {
+    "enabled": true
+  },
+  "git": {
+    "enabled": false
+  },
+  "model": {
+    "enabled": true
+  },
+  "block": {
+    "enabled": true,
+    "displayStyle": "bar",
+    "barWidth": 8,
+    "showTimeRemaining": true
+  },
+  "weekly": {
+    "enabled": true,
+    "displayStyle": "bar",
+    "barWidth": 8,
+    "showWeekProgress": true,
+    "viewMode": "smart"
+  },
+  "context": {
+    "enabled": true
+  },
+  "budget": {
+    "pollInterval": 15,
+    "warningThreshold": 80
+  },
+  "theme": "dark",
+  "segmentOrder": ["directory", "model", "context", "block", "weekly"],
+  "showTrend": true
+}
