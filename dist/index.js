@@ -489,10 +489,10 @@ var SYMBOLS = {
   separator: "\uE0B1",
   model: "\u2731",
   // Heavy asterisk ✱
-  block_cost: "\u25EB",
-  // White square with vertical bisecting line ◫
-  weekly_cost: "\u25CB",
-  // Circle ○
+  block_cost: "\u23F1\uFE0F",
+  // Stopwatch ⏱️
+  weekly_cost: "\uD83D\uDCC5",
+  // Calendar 📅
   opus_cost: "\u25C8",
   // Diamond with dot ◈
   sonnet_cost: "\u25C7",
@@ -510,8 +510,8 @@ var TEXT_SYMBOLS = {
   branch: "",
   separator: "|",
   model: "*",
-  block_cost: "\u0411\u041B\u041A",
-  weekly_cost: "\u041D\u0415\u0414",
+  block_cost: "\u23F1\uFE0F",
+  weekly_cost: "\uD83D\uDCC5",
   opus_cost: "Op",
   sonnet_cost: "So",
   bottleneck: "*",
@@ -672,8 +672,8 @@ var Renderer = class {
       separator: symbolSet.separator,
       branch: symbolSet.branch,
       model: symbolSet.model,
-      context: "\u25D0",
-      // Half-filled circle for context
+      context: "\uD83E\uDDE0",
+      // Brain 🧠
       progressFull: symbolSet.progress_full,
       progressEmpty: symbolSet.progress_empty,
       trendUp: "\u2191",
@@ -929,7 +929,7 @@ var Renderer = class {
       return null;
     }
     const percent = ctx.envInfo.contextPercent;
-    const icon = this.usePowerline ? this.symbols.context : "\u041A\u0422\u041A";
+    const icon = this.usePowerline ? this.symbols.context : "\uD83E\uDDE0";
     const colors = this.getColorsForPercent(percent, this.theme.context);
     const bar = this.formatProgressBar(percent, 10, ansi.fg(colors.fg));
     return {
