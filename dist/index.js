@@ -99,27 +99,7 @@ import path2 from "path";
 import os2 from "os";
 var execAsync = promisify(exec);
 async function getOAuthTokenWindows() {
-  try {
-    const { stdout } = await execAsync(
-      `powershell -Command "[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((Get-StoredCredential -Target 'Claude Code' -AsCredentialObject).Password))"`,
-      { timeout: 5e3 }
-    );
-    const token = stdout.trim();
-    if (token && token.startsWith("sk-ant-oat")) {
-      return token;
-    }
-  } catch (error) {
-    debug("PowerShell credential retrieval failed:", error);
-  }
-  try {
-    const { stdout } = await execAsync(
-      `powershell -Command "$cred = cmdkey /list:Claude* | Select-String -Pattern 'User:.*'; if ($cred) { $cred.Line.Split(':')[1].Trim() }"`,
-      { timeout: 5e3 }
-    );
-    debug("cmdkey output:", stdout);
-  } catch (error) {
-    debug("cmdkey approach failed:", error);
-  }
+  // Try credentials file FIRST — instant, no PowerShell overhead
   const primaryPath = path2.join(os2.homedir(), ".claude", ".credentials.json");
   try {
     if (fs2.existsSync(primaryPath)) {
@@ -159,41 +139,10 @@ async function getOAuthTokenWindows() {
       debug(`Failed to read config from ${configPath}:`, error);
     }
   }
-  return null;
-}
-async function getOAuthTokenMacOS() {
+  // PowerShell fallback — only if file-based retrieval failed
   try {
     const { stdout } = await execAsync(
-      `security find-generic-password -s "Claude Code-credentials" -w`,
-      { timeout: 5e3 }
-    );
-    const content = stdout.trim();
-    if (content.startsWith("{")) {
-      try {
-        const parsed = JSON.parse(content);
-        if (parsed.claudeAiOauth && typeof parsed.claudeAiOauth === "object") {
-          const token = parsed.claudeAiOauth.accessToken;
-          if (token && typeof token === "string" && token.startsWith("sk-ant-oat")) {
-            debug("Found OAuth token in macOS Keychain under claudeAiOauth.accessToken");
-            return token;
-          }
-        }
-      } catch (parseError) {
-        debug("Failed to parse keychain JSON:", parseError);
-      }
-    }
-    if (content.startsWith("sk-ant-oat")) {
-      return content;
-    }
-  } catch (error) {
-    debug("macOS Keychain retrieval failed:", error);
-  }
-  return null;
-}
-async function getOAuthTokenLinux() {
-  try {
-    const { stdout } = await execAsync(
-      `secret-tool lookup service "Claude Code"`,
+      `powershell -Command "[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((Get-StoredCredential -Target 'Claude Code' -AsCredentialObject).Password))"`,
       { timeout: 5e3 }
     );
     const token = stdout.trim();
@@ -201,8 +150,88 @@ async function getOAuthTokenLinux() {
       return token;
     }
   } catch (error) {
-    debug("Linux secret-tool retrieval failed:", error);
+    debug("PowerShell credential retrieval failed:", error);
   }
+  return null;
+}
+function extractTokenFromKeychainContent(content) {
+  if (!content) return null;
+  if (content.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed.claudeAiOauth && typeof parsed.claudeAiOauth === "object") {
+        const token = parsed.claudeAiOauth.accessToken;
+        if (token && typeof token === "string" && token.startsWith("sk-ant-oat")) {
+          return token;
+        }
+      }
+    } catch (e) {
+      debug("Failed to parse keychain JSON:", e);
+    }
+  }
+  if (content.startsWith("sk-ant-oat")) return content;
+  return null;
+}
+async function findKeychainServiceName() {
+  try {
+    const { stdout } = await execAsync(
+      `security dump-keychain 2>/dev/null | grep -o '"Claude Code-credentials[^"]*"'`,
+      { timeout: 5e3 }
+    );
+    const matches = stdout.trim().split("\n")
+      .map((s) => s.replace(/^"|"$/g, ""))
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    if (matches.length > 0) {
+      debug(`Found keychain service: ${matches[0]}`);
+      return matches[0];
+    }
+  } catch (error) {
+    debug("Keychain service name lookup failed:", error);
+  }
+  return "Claude Code-credentials";
+}
+async function getOAuthTokenMacOS() {
+  // Try credentials file first (instant, no shell overhead)
+  const credPaths = [
+    path2.join(os2.homedir(), ".claude", ".credentials.json"),
+    path2.join(os2.homedir(), ".claude", "credentials.json")
+  ];
+  for (const credPath of credPaths) {
+    try {
+      if (fs2.existsSync(credPath)) {
+        const content = fs2.readFileSync(credPath, "utf-8");
+        const config = JSON.parse(content);
+        if (config.claudeAiOauth?.accessToken?.startsWith("sk-ant-oat")) {
+          debug(`Found OAuth token in ${credPath}`);
+          return config.claudeAiOauth.accessToken;
+        }
+      }
+    } catch (e) { debug(`Failed to read ${credPath}:`, e); }
+  }
+  // Keychain fallback — supports hash-suffixed service names (e.g. Claude Code-credentials-697375ae)
+  const serviceName = await findKeychainServiceName();
+  const names = [serviceName];
+  if (serviceName !== "Claude Code-credentials") names.push("Claude Code-credentials");
+  for (const name of names) {
+    try {
+      const { stdout } = await execAsync(
+        `security find-generic-password -s "${name}" -w`,
+        { timeout: 5e3 }
+      );
+      const token = extractTokenFromKeychainContent(stdout.trim());
+      if (token) {
+        debug(`Found OAuth token in macOS Keychain (service: ${name})`);
+        return token;
+      }
+    } catch (error) {
+      debug(`macOS Keychain retrieval failed for "${name}":`, error);
+    }
+  }
+  return null;
+}
+async function getOAuthTokenLinux() {
+  // Try credentials file first (instant, no shell overhead)
   const configPaths = [
     path2.join(os2.homedir(), ".claude", ".credentials.json"),
     path2.join(os2.homedir(), ".claude", "credentials.json"),
@@ -213,12 +242,9 @@ async function getOAuthTokenLinux() {
       if (fs2.existsSync(configPath)) {
         const content = fs2.readFileSync(configPath, "utf-8");
         const config = JSON.parse(content);
-        if (config.claudeAiOauth && typeof config.claudeAiOauth === "object") {
-          const token = config.claudeAiOauth.accessToken;
-          if (token && typeof token === "string" && token.startsWith("sk-ant-oat")) {
-            debug(`Found OAuth token in ${configPath} under claudeAiOauth.accessToken`);
-            return token;
-          }
+        if (config.claudeAiOauth?.accessToken?.startsWith("sk-ant-oat")) {
+          debug(`Found OAuth token in ${configPath}`);
+          return config.claudeAiOauth.accessToken;
         }
         for (const key of ["oauth_token", "token", "accessToken"]) {
           const token = config[key];
@@ -231,6 +257,19 @@ async function getOAuthTokenLinux() {
     } catch (error) {
       debug(`Failed to read config from ${configPath}:`, error);
     }
+  }
+  // GNOME Keyring fallback
+  try {
+    const { stdout } = await execAsync(
+      `secret-tool lookup service "Claude Code"`,
+      { timeout: 5e3 }
+    );
+    const token = stdout.trim();
+    if (token && token.startsWith("sk-ant-oat")) {
+      return token;
+    }
+  } catch (error) {
+    debug("Linux secret-tool retrieval failed:", error);
   }
   return null;
 }
@@ -290,6 +329,71 @@ var cachedUsage = null;
 var previousUsage = null;
 var cacheTimestamp = 0;
 var cachedToken = null;
+var DISK_CACHE_PATH = path2.join(os2.homedir(), ".claude", ".statusline-cache.json");
+var LOCK_FILE_PATH = path2.join(os2.homedir(), ".claude", ".statusline-api.lock");
+var LOCK_MAX_AGE_MS = 15000; // 15s — if lock older than this, consider it stale/crashed
+
+function acquireLock() {
+  try {
+    // O_EXCL — atomic create, fails if file exists
+    const fd = fs2.openSync(LOCK_FILE_PATH, fs2.constants.O_CREAT | fs2.constants.O_EXCL | fs2.constants.O_WRONLY);
+    fs2.writeSync(fd, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+    fs2.closeSync(fd);
+    debug(`Lock acquired by PID ${process.pid}`);
+    return true;
+  } catch (e) {
+    if (e.code === "EEXIST") {
+      // Lock exists — check if stale
+      try {
+        const lockData = JSON.parse(fs2.readFileSync(LOCK_FILE_PATH, "utf-8"));
+        const age = Date.now() - lockData.ts;
+        if (age > LOCK_MAX_AGE_MS) {
+          debug(`Stale lock (age: ${age}ms, PID: ${lockData.pid}), breaking it`);
+          fs2.unlinkSync(LOCK_FILE_PATH);
+          return acquireLock(); // retry once
+        }
+        debug(`Lock held by PID ${lockData.pid} (age: ${age}ms), skipping API call`);
+      } catch (readErr) {
+        debug("Could not read lock file, skipping API call");
+      }
+      return false;
+    }
+    debug("Lock acquire error:", e);
+    return false;
+  }
+}
+
+function releaseLock() {
+  try {
+    fs2.unlinkSync(LOCK_FILE_PATH);
+    debug("Lock released");
+  } catch (e) { debug("Lock release error:", e); }
+}
+
+function saveCacheToDisk(usage, prevUsage) {
+  try {
+    const obj = { ts: Date.now(), data: usage };
+    if (prevUsage) obj.prev = prevUsage;
+    fs2.writeFileSync(DISK_CACHE_PATH, JSON.stringify(obj), "utf-8");
+    debug("Saved usage cache to disk");
+  } catch (e) { debug("Failed to save disk cache:", e); }
+}
+var _lastDiskCacheTs = 0;
+var _lastDiskCachePrev = null;
+function loadCacheFromDisk(maxAgeMs) {
+  try {
+    if (!fs2.existsSync(DISK_CACHE_PATH)) return null;
+    const raw = JSON.parse(fs2.readFileSync(DISK_CACHE_PATH, "utf-8"));
+    _lastDiskCacheTs = raw.ts;
+    const revive = (b) => b ? { ...b, resetAt: new Date(b.resetAt) } : null;
+    if (raw.prev) {
+      _lastDiskCachePrev = { fiveHour: revive(raw.prev.fiveHour), sevenDay: revive(raw.prev.sevenDay), sevenDayOpus: revive(raw.prev.sevenDayOpus), sevenDaySonnet: revive(raw.prev.sevenDaySonnet), raw: raw.prev.raw };
+    }
+    if (Date.now() - raw.ts > maxAgeMs) { debug("Disk cache too old"); return null; }
+    debug(`Loaded usage from disk cache (age: ${Math.round((Date.now() - raw.ts) / 1e3)}s)`);
+    return { fiveHour: revive(raw.data.fiveHour), sevenDay: revive(raw.data.sevenDay), sevenDayOpus: revive(raw.data.sevenDayOpus), sevenDaySonnet: revive(raw.data.sevenDaySonnet), raw: raw.data.raw };
+  } catch (e) { debug("Failed to load disk cache:", e); return null; }
+}
 function getUsageTrend() {
   const result = {
     fiveHourTrend: null,
@@ -297,7 +401,8 @@ function getUsageTrend() {
     sevenDayOpusTrend: null,
     sevenDaySonnetTrend: null
   };
-  if (!cachedUsage || !previousUsage) {
+  const prev = previousUsage || _lastDiskCachePrev;
+  if (!cachedUsage || !prev) {
     return result;
   }
   const compareTrend = (current, previous) => {
@@ -307,37 +412,98 @@ function getUsageTrend() {
     if (diff < -0.5) return "down";
     return "same";
   };
-  result.fiveHourTrend = compareTrend(cachedUsage.fiveHour, previousUsage.fiveHour);
-  result.sevenDayTrend = compareTrend(cachedUsage.sevenDay, previousUsage.sevenDay);
-  result.sevenDayOpusTrend = compareTrend(cachedUsage.sevenDayOpus, previousUsage.sevenDayOpus);
-  result.sevenDaySonnetTrend = compareTrend(cachedUsage.sevenDaySonnet, previousUsage.sevenDaySonnet);
+  result.fiveHourTrend = compareTrend(cachedUsage.fiveHour, prev.fiveHour);
+  result.sevenDayTrend = compareTrend(cachedUsage.sevenDay, prev.sevenDay);
+  result.sevenDayOpusTrend = compareTrend(cachedUsage.sevenDayOpus, prev.sevenDayOpus);
+  result.sevenDaySonnetTrend = compareTrend(cachedUsage.sevenDaySonnet, prev.sevenDaySonnet);
   return result;
 }
+var _inflightPromise = null;
 async function getRealtimeUsage(pollIntervalMinutes = 15) {
+  // Deduplicate concurrent calls within same process
+  if (_inflightPromise) return _inflightPromise;
+  _inflightPromise = _getRealtimeUsageInner(pollIntervalMinutes);
+  try { return await _inflightPromise; } finally { _inflightPromise = null; }
+}
+async function _getRealtimeUsageInner(pollIntervalMinutes) {
   const now = Date.now();
-  const cacheAgeMs = now - cacheTimestamp;
   const pollIntervalMs = pollIntervalMinutes * 60 * 1e3;
-  if (cachedUsage && cacheAgeMs < pollIntervalMs) {
-    debug(`Using cached usage data (age: ${Math.round(cacheAgeMs / 1e3)}s)`);
-    return cachedUsage;
+  const maxDiskCacheMs = 4 * 60 * 60 * 1e3; // 4 hours — usage data is slow-moving
+
+  // Always try disk cache first (shared across all windows/processes)
+  const diskData = loadCacheFromDisk(maxDiskCacheMs);
+  if (diskData) {
+    const diskAge = now - _lastDiskCacheTs;
+    if (diskAge < pollIntervalMs) {
+      // Disk cache is fresh — use it, no API call needed
+      if (!cachedUsage) previousUsage = cachedUsage;
+      cachedUsage = diskData;
+      cacheTimestamp = now;
+      debug(`Using fresh disk cache (age: ${Math.round(diskAge / 1e3)}s)`);
+      return cachedUsage;
+    }
+    // Disk cache exists but stale — keep as fallback
+    cachedUsage = diskData;
+    debug(`Disk cache stale (age: ${Math.round(diskAge / 1e3)}s), will try API`);
   }
-  if (!cachedToken) {
-    cachedToken = await getOAuthToken();
-    if (!cachedToken) {
-      debug("Could not retrieve OAuth token for realtime usage");
-      return null;
+
+  // Disk cache is stale or missing — try to acquire lock for API call
+  const gotLock = acquireLock();
+  if (!gotLock) {
+    // Another process is fetching — return stale data (it will be refreshed soon)
+    debug("Another process is fetching, using stale cache");
+    if (cachedUsage) { cacheTimestamp = now; return cachedUsage; }
+    // No data at all — wait briefly for the other process to finish
+    await new Promise(r => setTimeout(r, 2000));
+    const freshData = loadCacheFromDisk(maxDiskCacheMs);
+    if (freshData) { cachedUsage = freshData; cacheTimestamp = now; return cachedUsage; }
+    return null;
+  }
+
+  // We hold the lock — re-check disk cache (another process may have just written it)
+  const recheckData = loadCacheFromDisk(maxDiskCacheMs);
+  if (recheckData) {
+    const recheckAge = now - _lastDiskCacheTs;
+    if (recheckAge < pollIntervalMs) {
+      debug("Cache refreshed by another process while acquiring lock");
+      cachedUsage = recheckData;
+      cacheTimestamp = now;
+      releaseLock();
+      return cachedUsage;
     }
   }
-  const usage = await fetchUsageFromAPI(cachedToken);
-  if (usage) {
-    previousUsage = cachedUsage;
-    cachedUsage = usage;
-    cacheTimestamp = now;
-    debug("Refreshed realtime usage cache");
-  } else {
-    cachedToken = null;
+
+  // Actually fetch from API (we hold the lock)
+  try {
+    if (!cachedToken) {
+      cachedToken = await getOAuthToken();
+      if (!cachedToken) {
+        debug("Could not retrieve OAuth token for realtime usage");
+        if (cachedUsage) { cacheTimestamp = now; }
+        return cachedUsage;
+      }
+    }
+    const usage = await fetchUsageFromAPI(cachedToken);
+    if (usage) {
+      previousUsage = cachedUsage;
+      cachedUsage = usage;
+      cacheTimestamp = now;
+      saveCacheToDisk(usage, previousUsage);
+      debug("Refreshed realtime usage cache (locked)");
+    } else {
+      // API failed (429, network error, etc.) — extend stale data lifetime
+      debug("API failed, returning stale cached data");
+      if (cachedUsage) {
+        cacheTimestamp = now;
+      } else {
+        const stale = loadCacheFromDisk(maxDiskCacheMs);
+        if (stale) { cachedUsage = stale; cacheTimestamp = now; }
+      }
+    }
+  } finally {
+    releaseLock();
   }
-  return usage;
+  return cachedUsage;
 }
 
 // src/segments/block.ts
@@ -1029,6 +1195,11 @@ function formatModelName(modelId, displayName) {
     if (clean) return clean;
   }
   const mappings = {
+    "claude-opus-4-6": "Opus 4.6",
+    "claude-opus-4-6-20260120": "Opus 4.6",
+    "claude-sonnet-4-6": "Sonnet 4.6",
+    "claude-sonnet-4-6-20260120": "Sonnet 4.6",
+    "claude-haiku-4-5-20251001": "Haiku 4.5",
     "claude-opus-4-5-20251101": "Opus 4.5",
     "claude-opus-4-20250514": "Opus 4",
     "claude-sonnet-4-20250514": "Sonnet 4",
@@ -1046,18 +1217,21 @@ function formatModelName(modelId, displayName) {
   }
   const lower = modelId.toLowerCase();
   if (lower.includes("opus")) {
+    if (lower.includes("4-6") || lower.includes("4.6")) return "Opus 4.6";
     if (lower.includes("4-5") || lower.includes("4.5")) return "Opus 4.5";
     if (lower.includes("4")) return "Opus 4";
     if (lower.includes("3")) return "Opus 3";
     return "Opus";
   }
   if (lower.includes("sonnet")) {
+    if (lower.includes("4-6") || lower.includes("4.6")) return "Sonnet 4.6";
     if (lower.includes("4")) return "Sonnet 4";
     if (lower.includes("3-5") || lower.includes("3.5")) return "Sonnet 3.5";
     if (lower.includes("3")) return "Sonnet 3";
     return "Sonnet";
   }
   if (lower.includes("haiku")) {
+    if (lower.includes("4-5") || lower.includes("4.5")) return "Haiku 4.5";
     if (lower.includes("3")) return "Haiku 3";
     return "Haiku";
   }
@@ -1122,11 +1296,12 @@ function getContextPercent(hookData) {
   const totalTokens = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
   return Math.round(totalTokens / ctx.context_window_size * 100);
 }
-function getEnvironmentInfo(hookData) {
+function getEnvironmentInfo(hookData, config) {
+  const gitEnabled = config?.git?.enabled ?? true;
   return {
     directory: getDirectoryName(hookData),
-    gitBranch: getGitBranch(),
-    gitDirty: hasGitChanges(),
+    gitBranch: gitEnabled ? getGitBranch() : null,
+    gitDirty: gitEnabled ? hasGitChanges() : false,
     model: getClaudeModel(hookData),
     contextPercent: getContextPercent(hookData)
   };
@@ -1139,7 +1314,7 @@ async function main() {
     debug("Config loaded:", JSON.stringify(config));
     const hookData = await readHookData();
     debug("Hook data:", JSON.stringify(hookData));
-    const envInfo = getEnvironmentInfo(hookData);
+    const envInfo = getEnvironmentInfo(hookData, config);
     debug("Environment info:", JSON.stringify(envInfo));
     const blockProvider = new BlockProvider();
     const weeklyProvider = new WeeklyProvider();

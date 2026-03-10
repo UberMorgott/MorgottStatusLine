@@ -4,11 +4,13 @@
 
 Форк [claude-limitline](https://github.com/tylergraydev/claude-limitline) с доработками:
 
-- **Цветные прогрессбары** — заполненность плавно меняется от зелёного к красному, пустая часть голубая
-- **Русская локализация** — время `3ч17м`, `6д18ч`, подписи `нед`, `БЛК`, `КТК`
-- **Полный путь** к рабочей директории
-- **Время до сброса** на всех лимитах (5ч блок + неделя)
-- **Контекст в основном потоке** с прогрессбаром
+- **Shared disk cache** — все окна Claude Code используют один кэш, без дублирования API-запросов
+- **File lock** — атомарная блокировка (`O_EXCL`) предотвращает race condition между окнами
+- **Trend persistence** — стрелки ↑↓ работают между перезапусками (хранятся на диске)
+- **Credentials file first** — мгновенное чтение токена из файла, shell-команды только как fallback
+- **macOS Keychain hash-suffix** — поддержка нового формата `Claude Code-credentials-<hash>`
+- **Цветные прогрессбары** — плавный градиент от зелёного к красному
+- **Русская локализация** — время `3ч17м`, `6д18ч`
 - **Кроссплатформенный** — Windows, macOS, Linux
 
 ## Как выглядит
@@ -17,11 +19,11 @@
 
 | Сегмент | Описание |
 |---------|----------|
-| Путь | Полный путь к рабочей директории |
-| Модель | Текущая модель Claude |
+| Путь | Рабочая директория |
+| Модель | Текущая модель Claude (Opus 4.6, Sonnet 4.6, и т.д.) |
 | 🧠 Контекст | Использование контекстного окна |
-| ⏱️ Блок 5ч | Лимит 5-часового блока подписки |
-| 📅 Неделя | Недельный лимит подписки |
+| ⏱️ Блок 5ч | Лимит 5-часового блока подписки + время до сброса |
+| 📅 Неделя | Недельный лимит подписки + время до сброса |
 
 ## Установка (одна команда)
 
@@ -72,7 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/maste
   },
   "context": { "enabled": true },
   "budget": {
-    "pollInterval": 15,
+    "pollInterval": 5,
     "warningThreshold": 80
   },
   "theme": "dark",
@@ -87,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/maste
 |----------|----------|-------------|
 | `display.useNerdFonts` | Символы Nerd Font для powerline | `true` |
 | `display.compactMode` | `"auto"`, `"always"`, `"never"` | `"auto"` |
-| `directory.enabled` | Полный путь к директории | `true` |
+| `directory.enabled` | Путь к директории | `true` |
 | `git.enabled` | Git-ветка с индикатором изменений | `true` |
 | `model.enabled` | Модель Claude | `true` |
 | `block.displayStyle` | `"bar"` или `"text"` | `"text"` |
@@ -111,13 +113,13 @@ curl -fsSL https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/maste
 
 ## OAuth-токен
 
-Токен берётся автоматически из хранилища Claude Code:
+Токен берётся автоматически — сначала из файла (мгновенно), затем из системного хранилища:
 
-| Платформа | Расположение |
-|-----------|-------------|
-| **macOS** | Keychain (`Claude Code-credentials`) |
-| **Windows** | Credential Manager или `~/.claude/.credentials.json` |
-| **Linux** | GNOME Keyring (secret-tool) или `~/.claude/.credentials.json` |
+| Платформа | Приоритет |
+|-----------|-----------|
+| **Windows** | `~/.claude/.credentials.json` → Credential Manager (PowerShell) |
+| **macOS** | `~/.claude/.credentials.json` → Keychain (поддержка hash-суффиксов) |
+| **Linux** | `~/.claude/.credentials.json` → GNOME Keyring (secret-tool) |
 
 Нужна авторизация через `claude --login`.
 
