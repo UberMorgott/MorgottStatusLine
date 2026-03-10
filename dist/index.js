@@ -390,6 +390,7 @@ function loadCacheFromDisk(maxAgeMs) {
       _lastDiskCachePrev = { fiveHour: revive(raw.prev.fiveHour), sevenDay: revive(raw.prev.sevenDay), sevenDayOpus: revive(raw.prev.sevenDayOpus), sevenDaySonnet: revive(raw.prev.sevenDaySonnet), raw: raw.prev.raw };
     }
     if (Date.now() - raw.ts > maxAgeMs) { debug("Disk cache too old"); return null; }
+    if (!raw.data) { debug(`Disk cache has null data (error entry, age: ${Math.round((Date.now() - raw.ts) / 1e3)}s)`); return null; }
     debug(`Loaded usage from disk cache (age: ${Math.round((Date.now() - raw.ts) / 1e3)}s)`);
     return { fiveHour: revive(raw.data.fiveHour), sevenDay: revive(raw.data.sevenDay), sevenDayOpus: revive(raw.data.sevenDayOpus), sevenDaySonnet: revive(raw.data.sevenDaySonnet), raw: raw.data.raw };
   } catch (e) { debug("Failed to load disk cache:", e); return null; }
@@ -445,6 +446,11 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
     // Disk cache exists but stale — keep as fallback
     cachedUsage = diskData;
     debug(`Disk cache stale (age: ${Math.round(diskAge / 1e3)}s), will try API`);
+  } else if (_lastDiskCacheTs && (now - _lastDiskCacheTs) < pollIntervalMs) {
+    // Disk cache entry exists and is fresh, but data is null (previous API error).
+    // Skip API call to avoid hammering a rate-limited endpoint.
+    debug(`Disk cache is fresh error entry (age: ${Math.round((now - _lastDiskCacheTs) / 1e3)}s), skipping API call`);
+    return cachedUsage;
   }
 
   // Disk cache is stale or missing — try to acquire lock for API call
@@ -499,6 +505,9 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
         const stale = loadCacheFromDisk(maxDiskCacheMs);
         if (stale) { cachedUsage = stale; cacheTimestamp = now; }
       }
+      // Write a cache entry to disk even on failure, so other processes
+      // see a fresh timestamp and don't hammer the API (breaks 429 loop)
+      saveCacheToDisk(null, previousUsage || _lastDiskCachePrev);
     }
   } finally {
     releaseLock();
