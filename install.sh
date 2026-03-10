@@ -1,8 +1,18 @@
 #!/bin/bash
 # MorgottStatusLine Installer for macOS/Linux
+# Usage: curl -fsSL <url>/install.sh | sudo bash
 set -e
 
 echo -e "\033[36mInstalling MorgottStatusLine...\033[0m"
+
+# Resolve real user's home when running under sudo
+if [ -n "$SUDO_USER" ]; then
+    REAL_HOME=$(eval echo "~$SUDO_USER")
+    REAL_USER="$SUDO_USER"
+else
+    REAL_HOME="$HOME"
+    REAL_USER="$(whoami)"
+fi
 
 # Check npm
 if ! command -v npm &> /dev/null; then
@@ -10,12 +20,12 @@ if ! command -v npm &> /dev/null; then
     exit 1
 fi
 
-# Install from GitHub
+# Install globally with sudo (npm needs root for -g)
 echo -e "\033[33mInstalling package from GitHub...\033[0m"
 npm install -g --force "github:UberMorgott/MorgottStatusLine"
 
-# Create config directory
-CLAUDE_DIR="$HOME/.claude"
+# Create config directory as real user
+CLAUDE_DIR="$REAL_HOME/.claude"
 mkdir -p "$CLAUDE_DIR"
 
 # Write config
@@ -62,7 +72,6 @@ fi
 # Update settings.json
 SETTINGS_PATH="$CLAUDE_DIR/settings.json"
 if [ -f "$SETTINGS_PATH" ]; then
-    # Check if node is available for JSON manipulation
     if command -v node &> /dev/null; then
         node -e "
 const fs = require('fs');
@@ -78,6 +87,12 @@ fs.writeFileSync(p, JSON.stringify(s, null, 2));
 else
     echo '{"statusLine":{"type":"command","command":"morgott-statusline"}}' > "$SETTINGS_PATH"
 fi
+
+# Fix ownership if running under sudo
+if [ -n "$SUDO_USER" ]; then
+    chown -R "$REAL_USER" "$CLAUDE_DIR"
+fi
+
 echo -e "\033[32mSettings updated: $SETTINGS_PATH\033[0m"
 
 echo ""
