@@ -9,7 +9,7 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 
 # Install from GitHub
 Write-Host "Installing package from GitHub..." -ForegroundColor Yellow
-npm install -g "github:UberMorgott/MorgottStatusLine"
+npm install -g --force "github:UberMorgott/MorgottStatusLine"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Error: npm install failed" -ForegroundColor Red
     exit 1
@@ -49,7 +49,7 @@ if (-not (Test-Path $configPath)) {
   },
   "context": { "enabled": true },
   "budget": {
-    "pollInterval": 15,
+    "pollInterval": 5,
     "warningThreshold": 80
   },
   "theme": "dark",

@@ -12,7 +12,7 @@ fi
 
 # Install from GitHub
 echo -e "\033[33mInstalling package from GitHub...\033[0m"
-npm install -g "github:UberMorgott/MorgottStatusLine"
+npm install -g --force "github:UberMorgott/MorgottStatusLine"
 
 # Create config directory
 CLAUDE_DIR="$HOME/.claude"
@@ -46,7 +46,7 @@ if [ ! -f "$CONFIG_PATH" ]; then
   },
   "context": { "enabled": true },
   "budget": {
-    "pollInterval": 15,
+    "pollInterval": 5,
     "warningThreshold": 80
   },
   "theme": "dark",
