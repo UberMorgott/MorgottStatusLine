@@ -34,7 +34,7 @@ irm https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/master/insta
 
 **macOS / Linux:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/master/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/master/install.sh | bash
 ```
 
 Скрипт автоматически:
