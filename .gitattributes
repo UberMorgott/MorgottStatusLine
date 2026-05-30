@@ -1,0 +1,7 @@
+# Guarantee LF for files that must run on Linux/macOS regardless of a
+# contributor's core.autocrlf. A CRLF in the bin's shebang line, or anywhere
+# in the shell installer, breaks execution on POSIX (kernel looks for "node\r").
+dist/index.js text eol=lf
+*.sh text eol=lf
+# Windows-only installer keeps CRLF.
+*.ps1 text eol=crlf
