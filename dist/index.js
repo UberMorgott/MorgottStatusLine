@@ -850,11 +850,12 @@ var WeeklyProvider = class {
     return Math.round(progress);
   }
   async getWeeklyInfo(resetDay, resetHour, resetMinute, pollInterval, stdinUsage, needPerModel) {
-    if (stdinUsage?.sevenDay && !needPerModel) {
+    let stdinInfo = null;
+    if (stdinUsage?.sevenDay) {
       const sevenDay = stdinUsage.sevenDay;
       const weekProgressPercent = this.calculateWeekProgressFromResetTime(sevenDay.resetAt);
       debug(`Weekly segment (stdin): ${sevenDay.percentUsed}% used`);
-      return {
+      stdinInfo = {
         percentUsed: sevenDay.percentUsed,
         resetAt: sevenDay.resetAt,
         isRealtime: true,
@@ -864,11 +865,21 @@ var WeeklyProvider = class {
         opusResetAt: null,
         sonnetResetAt: null
       };
+      if (!needPerModel) return stdinInfo;
     }
     const realtimeInfo = await this.getRealtimeWeeklyInfo(pollInterval);
     if (realtimeInfo) {
+      // Per-model path: the API only adds the Sonnet/Opus split; the hook's overall
+      // total is fresher than the (possibly stale) shared disk cache.
+      if (stdinInfo) {
+        realtimeInfo.percentUsed = stdinInfo.percentUsed;
+        realtimeInfo.resetAt = stdinInfo.resetAt;
+        realtimeInfo.weekProgressPercent = stdinInfo.weekProgressPercent;
+      }
       return realtimeInfo;
     }
+    // API unavailable (429 etc.) in per-model mode: show the hook total, not dashes.
+    if (stdinInfo) return stdinInfo;
     debug("Realtime mode failed, falling back to estimate mode");
     const weekProgressPercent = this.calculateWeekProgress(resetDay, resetHour, resetMinute);
     return {
