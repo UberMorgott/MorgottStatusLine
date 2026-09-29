@@ -658,10 +658,11 @@ function computeTokenBreakdown(transcriptPath) {
     const buf = Buffer.alloc(len);
     fs2.readSync(fd, buf, 0, len, offset);
     fs2.closeSync(fd);
-    let text = buf.toString("utf-8");
-    let lastNl = text.lastIndexOf("\n");
-    let consumed = lastNl + 1;
-    const lines = text.slice(0, consumed).split("\n").filter(Boolean);
+    // Byte offset (not char index): offset is a file position, and multi-byte UTF-8
+    // (Cyrillic, emoji) would otherwise make the next read start too early and
+    // double-count already-summed lines.
+    const consumed = buf.lastIndexOf(0x0a) + 1;
+    const lines = buf.toString("utf-8", 0, consumed).split("\n").filter(Boolean);
     for (const line of lines) {
       let obj; try { obj = JSON.parse(line); } catch { continue; }
       const msg = obj.message;
