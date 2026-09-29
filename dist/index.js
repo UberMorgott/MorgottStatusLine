@@ -612,7 +612,9 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
       }
       // Write a cache entry to disk even on failure, so other processes
       // see a fresh timestamp and don't hammer the API (breaks 429 loop)
-      saveCacheToDisk(null, previousUsage || _lastDiskCachePrev);
+      // prev = newest known-good data (cachedUsage), not the older previousUsage, which
+      // is null in a fresh process and would leave other windows with dashes.
+      saveCacheToDisk(null, cachedUsage || _lastDiskCachePrev);
     }
   } finally {
     releaseLock();
