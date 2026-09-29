@@ -329,7 +329,10 @@ async function fetchUsageFromAPI(token) {
         "User-Agent": "claude-limitline/1.0.0",
         Authorization: `Bearer ${token}`,
         "anthropic-beta": "oauth-2025-04-20"
-      }
+      },
+      // Without a timeout a stalled request blocks the statusline render and outlives
+      // LOCK_MAX_AGE_MS, letting other processes break the lock and fire duplicate calls.
+      signal: AbortSignal.timeout(5e3)
     });
     if (!response.ok) {
       debug(`Usage API returned status ${response.status}: ${response.statusText}`);
