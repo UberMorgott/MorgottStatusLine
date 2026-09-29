@@ -658,6 +658,9 @@ function computeTokenBreakdown(transcriptPath) {
     const mtime = stat.mtimeMs, size = stat.size;
     let cache = null;
     try { cache = JSON.parse(fs2.readFileSync(TOKENS_CACHE_PATH, "utf-8")); } catch {}
+    // v2 = byte offsets; older caches stored char offsets (and possibly double-counted
+    // sums), so reparse from scratch instead of resuming from them.
+    if (cache?.v !== 2) cache = null;
     if (cache && cache.path === transcriptPath && cache.mtime === mtime && cache.size === size) {
       return cache.result;
     }
@@ -699,7 +702,7 @@ function computeTokenBreakdown(transcriptPath) {
     }
     const result = sums;
     fs2.writeFileSync(TOKENS_CACHE_PATH, JSON.stringify({
-      path: transcriptPath, mtime, size, offset: offset + consumed, sums, idName, result
+      v: 2, path: transcriptPath, mtime, size, offset: offset + consumed, sums, idName, result
     }), "utf-8");
     return result;
   } catch (e) { debug("token breakdown error:", e); return null; }
