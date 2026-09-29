@@ -368,32 +368,61 @@ var DISK_CACHE_PATH = path2.join(os2.homedir(), ".claude", ".statusline-cache.js
 var LOCK_FILE_PATH = path2.join(os2.homedir(), ".claude", ".statusline-api.lock");
 var LOCK_MAX_AGE_MS = 15000; // 15s — if lock older than this, consider it stale/crashed
 
+// src/utils/atomic-write.ts
+// Several Claude Code sessions render concurrently and share the ~/.claude/.statusline-*
+// files. A plain writeFileSync truncates then writes, so a concurrent reader can see an
+// empty/partial file (JSON.parse fails -> history wiped, cache dropped). Write a temp file
+// in the same directory and rename it over the target: readers see old or new, never half.
+var _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+function writeFileAtomic(filePath, data) {
+  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs2.writeFileSync(tmp, data, "utf-8");
+    for (let attempt = 0; ; attempt++) {
+      try { fs2.renameSync(tmp, filePath); return; }
+      catch (e) {
+        // Windows: rename fails with EPERM/EBUSY/EACCES while another process (AV,
+        // indexer, a non-Node reader) holds the target open. Retry briefly.
+        if (attempt >= 4 || !["EPERM", "EBUSY", "EACCES"].includes(e.code)) throw e;
+        Atomics.wait(_sleepBuf, 0, 0, 15);
+      }
+    }
+  } catch (e) {
+    try { fs2.unlinkSync(tmp); } catch {}
+    throw e;
+  }
+}
+
 // src/utils/history.ts
 var HISTORY_PATH = path2.join(os2.homedir(), ".claude", ".statusline-history.json");
 var HISTORY_MAX = 30;
 var HISTORY_MIN_GAP_MS = 60 * 1000;
 
+// Returns [] when the file is missing, null when it exists but is unreadable/corrupt.
 function loadHistory() {
   try {
     if (!fs2.existsSync(HISTORY_PATH)) return [];
     const arr = JSON.parse(fs2.readFileSync(HISTORY_PATH, "utf-8"));
-    return Array.isArray(arr) ? arr : [];
-  } catch (e) { debug("history load error:", e); return []; }
+    return Array.isArray(arr) ? arr : null;
+  } catch (e) { debug("history load error:", e); return null; }
 }
 
 // sample = { ts: epochMs, five: number|null, seven: number|null }
 function appendHistory(five, seven) {
   try {
     const hist = loadHistory();
+    // Unreadable file (e.g. mid-write by a pre-atomic version): don't overwrite it
+    // with a one-sample history — skip this tick.
+    if (hist === null) return [];
     const now = Date.now();
     const last = hist[hist.length - 1];
     if (last && (now - last.ts) < HISTORY_MIN_GAP_MS) return hist; // throttle
     if (five == null && seven == null) return hist;
     hist.push({ ts: now, five, seven });
     while (hist.length > HISTORY_MAX) hist.shift();
-    fs2.writeFileSync(HISTORY_PATH, JSON.stringify(hist), "utf-8");
+    writeFileAtomic(HISTORY_PATH, JSON.stringify(hist));
     return hist;
-  } catch (e) { debug("history append error:", e); return loadHistory(); }
+  } catch (e) { debug("history append error:", e); return loadHistory() ?? []; }
 }
 
 function trendFromHistory(hist, key) {
@@ -473,7 +502,7 @@ function saveCacheToDisk(usage, prevUsage) {
   try {
     const obj = { ts: Date.now(), data: usage };
     if (prevUsage) obj.prev = prevUsage;
-    fs2.writeFileSync(DISK_CACHE_PATH, JSON.stringify(obj), "utf-8");
+    writeFileAtomic(DISK_CACHE_PATH, JSON.stringify(obj));
     debug("Saved usage cache to disk");
   } catch (e) { debug("Failed to save disk cache:", e); }
 }
@@ -701,9 +730,9 @@ function computeTokenBreakdown(transcriptPath) {
       }
     }
     const result = sums;
-    fs2.writeFileSync(TOKENS_CACHE_PATH, JSON.stringify({
+    writeFileAtomic(TOKENS_CACHE_PATH, JSON.stringify({
       v: 2, path: transcriptPath, mtime, size, offset: offset + consumed, sums, idName, result
-    }), "utf-8");
+    }));
     return result;
   } catch (e) { debug("token breakdown error:", e); return null; }
 }
@@ -711,16 +740,21 @@ function computeTokenBreakdown(transcriptPath) {
 // src/utils/aggregate.ts
 var SESSIONS_PATH = path2.join(os2.homedir(), ".claude", ".statusline-sessions.json");
 
+// Returns {} when the file is missing, null when it exists but is unreadable/corrupt.
 function _loadSessions() {
   try {
     if (!fs2.existsSync(SESSIONS_PATH)) return {};
     const o = JSON.parse(fs2.readFileSync(SESSIONS_PATH, "utf-8"));
-    return (o && typeof o === "object") ? o : {};
-  } catch (e) { debug("sessions load error:", e); return {}; }
+    return (o && typeof o === "object") ? o : null;
+  } catch (e) { debug("sessions load error:", e); return null; }
 }
 function upsertAndAggregate(sessionId, costUsd, ctxTokens, ttlMs) {
   const now = Date.now();
-  let map = _loadSessions();
+  const loaded = _loadSessions();
+  // Unreadable file: aggregate our own session only and don't write, so the other
+  // sessions' entries aren't dropped from the shared map.
+  const canWrite = loaded !== null;
+  let map = loaded ?? {};
   if (sessionId) {
     const prev = map[sessionId];
     let tokRate = prev?.tokRate ?? 0;
@@ -738,8 +772,10 @@ function upsertAndAggregate(sessionId, costUsd, ctxTokens, ttlMs) {
     if (now - e.ts > ttlMs) { delete map[id]; continue; }
     count++; totalCost += e.cost || 0; totalCtx += e.ctx || 0; totalRate += e.tokRate || 0;
   }
-  try { fs2.writeFileSync(SESSIONS_PATH, JSON.stringify(map), "utf-8"); }
-  catch (e) { debug("sessions write error:", e); }
+  if (canWrite) {
+    try { writeFileAtomic(SESSIONS_PATH, JSON.stringify(map)); }
+    catch (e) { debug("sessions write error:", e); }
+  }
   return { count, totalCost, totalCtx, totalRate };
 }
 function _fmtTokens(n) {
