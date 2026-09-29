@@ -1717,21 +1717,32 @@ import { execSync } from "child_process";
 import { basename } from "path";
 
 // src/utils/claude-hook.ts
+var STDIN_TIMEOUT_MS = 1500;
 async function readHookData() {
   if (process.stdin.isTTY) {
     debug("stdin is TTY, no hook data");
     return null;
   }
   try {
+    // Read until EOF. The overall timeout only guards against a stdin that never closes;
+    // a fixed 100ms race used to drop input from a slow-to-write (busy) Claude Code.
     const chunks = [];
-    const result = await Promise.race([
-      new Promise((resolve, reject) => {
-        process.stdin.on("data", (chunk) => chunks.push(chunk));
-        process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-        process.stdin.on("error", reject);
-      }),
-      new Promise((resolve) => setTimeout(() => resolve(null), 100))
-    ]);
+    const result = await new Promise((resolve, reject) => {
+      const finish = (value) => {
+        clearTimeout(timer);
+        // Detach so a never-closing stdin doesn't keep the process alive after render.
+        process.stdin.removeAllListeners("data");
+        process.stdin.destroy();
+        resolve(value);
+      };
+      const timer = setTimeout(() => {
+        debug(`stdin not closed after ${STDIN_TIMEOUT_MS}ms, using data received so far`);
+        finish(Buffer.concat(chunks).toString("utf-8"));
+      }, STDIN_TIMEOUT_MS);
+      process.stdin.on("data", (chunk) => chunks.push(chunk));
+      process.stdin.on("end", () => finish(Buffer.concat(chunks).toString("utf-8")));
+      process.stdin.on("error", (e) => { clearTimeout(timer); reject(e); });
+    });
     if (!result || result.trim() === "") {
       debug("No stdin data received");
       return null;
