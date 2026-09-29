@@ -439,14 +439,15 @@ function acquireLock() {
     if (e.code === "EEXIST") {
       // Lock exists — check if stale
       try {
-        const lockData = JSON.parse(fs2.readFileSync(LOCK_FILE_PATH, "utf-8"));
-        const age = Date.now() - lockData.ts;
+        // Age from mtime, not file content: an empty/truncated lock (crash between
+        // create and write) must still expire instead of blocking the API forever.
+        const age = Date.now() - fs2.statSync(LOCK_FILE_PATH).mtimeMs;
         if (age > LOCK_MAX_AGE_MS) {
-          debug(`Stale lock (age: ${age}ms, PID: ${lockData.pid}), breaking it`);
+          debug(`Stale lock (age: ${age}ms), breaking it`);
           fs2.unlinkSync(LOCK_FILE_PATH);
           return acquireLock(); // retry once
         }
-        debug(`Lock held by PID ${lockData.pid} (age: ${age}ms), skipping API call`);
+        debug(`Lock held (age: ${age}ms), skipping API call`);
       } catch (readErr) {
         debug("Could not read lock file, skipping API call");
       }
@@ -459,6 +460,10 @@ function acquireLock() {
 
 function releaseLock() {
   try {
+    // Only remove our own lock: if ours went stale and another process took over,
+    // unlinking would drop its lock and let a third process fetch concurrently.
+    const lockData = JSON.parse(fs2.readFileSync(LOCK_FILE_PATH, "utf-8"));
+    if (lockData.pid !== process.pid) { debug(`Lock now owned by PID ${lockData.pid}, not releasing`); return; }
     fs2.unlinkSync(LOCK_FILE_PATH);
     debug("Lock released");
   } catch (e) { debug("Lock release error:", e); }
