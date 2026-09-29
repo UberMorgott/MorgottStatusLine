@@ -1,138 +1,149 @@
 # MorgottStatusLine
 
-Кастомный statusline для Claude Code с отслеживанием лимитов подписки Max/Pro.
+Строка состояния для Claude Code: рабочая директория, модель, заполнение контекста и лимиты подписки за 5 часов и неделю. Время отображается по-русски.
 
-Форк [claude-limitline](https://github.com/tylergraydev/claude-limitline) с доработками:
+![Пример строки состояния](preview.png)
 
-- **Shared disk cache** — все окна Claude Code используют один кэш, без дублирования API-запросов
-- **File lock** — атомарная блокировка (`O_EXCL`) предотвращает race condition между окнами
-- **Trend persistence** — стрелки ↑↓ работают между перезапусками (хранятся на диске)
-- **Credentials file first** — мгновенное чтение токена из файла, shell-команды только как fallback
-- **macOS Keychain hash-suffix** — поддержка нового формата `Claude Code-credentials-<hash>`
-- **Цветные прогрессбары** — плавный градиент от зелёного к красному
-- **Русская локализация** — время `3ч17м`, `6д18ч`
-- **Кроссплатформенный** — Windows, macOS, Linux
+## Установка
 
-## Как выглядит
+Требуются Node.js **18 или новее** и npm.
 
-![MorgottStatusLine Preview](preview.png)
+**Windows — PowerShell:**
 
-| Сегмент | Описание |
-|---------|----------|
-| Путь | Рабочая директория |
-| Модель | Текущая модель Claude (Opus 4.6, Sonnet 4.6, и т.д.) |
-| 🧠 Контекст | Использование контекстного окна |
-| ⏱️ Блок 5ч | Лимит 5-часового блока подписки + время до сброса |
-| 📅 Неделя | Недельный лимит подписки + время до сброса |
-
-## Установка (одна команда)
-
-**Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/master/install.ps1 | iex
 ```
 
-**macOS / Linux:**
+**macOS / Linux — Bash:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/UberMorgott/MorgottStatusLine/master/install.sh | bash
 ```
 
-Скрипт автоматически:
-1. Установит пакет с GitHub
-2. Создаст конфиг `~/.claude/claude-limitline.json`
-3. Настроит `~/.claude/settings.json`
-4. Перезапустите Claude Code — готово
+Из клонированного репозитория то же самое: `.\install.ps1` или `bash install.sh`.
 
-> Требуется [Node.js](https://nodejs.org) >= 18 и авторизация через `claude --login`
+Скрипты устанавливают пакет с GitHub, создают `~/.claude/claude-limitline.json`, если его ещё нет, и задают `statusLine` в `~/.claude/settings.json`, заменяя предыдущую настройку строки состояния. В Windows скрипт использует `%USERPROFILE%\.claude`.
 
-## Конфигурация
+В macOS / Linux пакет устанавливается в `$HOME/.local`. Добавьте каталог исполняемых файлов в `PATH`, если его там нет:
 
-Файл `~/.claude/claude-limitline.json`:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Сохраните эту строку в конфигурации вашей оболочки, чтобы настройка действовала после её перезапуска.
+
+**Установка локальной копии без скриптов:**
+
+```bash
+npm i -g .
+```
+
+В этом случае настройте Claude Code вручную: добавьте следующий ключ в существующий `~/.claude/settings.json`, сохранив остальные настройки.
 
 ```json
 {
-  "display": {
-    "style": "powerline",
-    "useNerdFonts": true,
-    "compactMode": "never"
-  },
-  "directory": { "enabled": true },
-  "git": { "enabled": false },
-  "model": { "enabled": true },
-  "block": {
-    "enabled": true,
-    "displayStyle": "bar",
-    "barWidth": 8,
-    "showTimeRemaining": true
-  },
-  "weekly": {
-    "enabled": true,
-    "displayStyle": "bar",
-    "barWidth": 8,
-    "showWeekProgress": true,
-    "viewMode": "smart"
-  },
-  "context": { "enabled": true },
-  "budget": {
-    "pollInterval": 5,
-    "warningThreshold": 80
-  },
-  "theme": "dark",
-  "segmentOrder": ["directory", "model", "context", "block", "weekly"],
-  "showTrend": true
+  "statusLine": {
+    "type": "command",
+    "command": "morgott-statusline"
+  }
 }
 ```
 
-### Параметры
+Команда `morgott-statusline` должна быть доступна через `PATH` процесса Claude Code. После установки перезапустите Claude Code.
 
-| Параметр | Описание | По умолчанию |
-|----------|----------|-------------|
-| `display.useNerdFonts` | Символы Nerd Font для powerline | `true` |
-| `display.compactMode` | `"auto"`, `"always"`, `"never"` | `"auto"` |
-| `directory.enabled` | Путь к директории | `true` |
-| `git.enabled` | Git-ветка с индикатором изменений | `true` |
-| `model.enabled` | Модель Claude | `true` |
-| `block.displayStyle` | `"bar"` или `"text"` | `"text"` |
-| `block.barWidth` | Ширина прогрессбара (символы) | `10` |
-| `block.showTimeRemaining` | Время до сброса блока | `true` |
-| `weekly.displayStyle` | `"bar"` или `"text"` | `"text"` |
-| `weekly.viewMode` | `"simple"` или `"smart"` | `"simple"` |
-| `budget.pollInterval` | Минут между запросами к API | `15` |
-| `budget.warningThreshold` | % для перехода в предупреждение | `80` |
-| `theme` | Тема оформления | `"dark"` |
-| `segmentOrder` | Порядок сегментов | см. выше |
-| `showTrend` | Стрелки ↑↓ изменения расхода | `true` |
+## Настройки
 
-### Темы
+Общий файл настроек: `~/.claude/claude-limitline.json`. Для отдельного проекта можно создать `.claude-limitline.json` в рабочем каталоге процесса. Первый успешно прочитанный файл имеет приоритет; два файла не объединяются. Неуказанные параметры берутся из встроенных значений.
 
-`dark`, `light`, `nord`, `gruvbox`, `tokyo-night`, `rose-pine`
+Минимальный пример с прогрессбарами:
 
-### Порядок сегментов
+```json
+{
+  "git": { "enabled": false },
+  "block": { "displayStyle": "bar" },
+  "weekly": { "displayStyle": "bar", "viewMode": "smart" },
+  "segmentOrder": ["directory", "model", "context", "block", "weekly"]
+}
+```
 
-Любой порядок из: `directory`, `model`, `context`, `block`, `weekly`, `git`
+Ниже приведены **встроенные значения**, действующие без пользовательских настроек. Установщики создают другой вариант: Git выключен, компактный режим — `never`, лимиты показаны полосами, недельный режим — `smart`, интервал API — 5 минут. В [config-example.json](config-example.json) интервал равен 15 минутам.
 
-## OAuth-токен
+| Параметр | Назначение | Встроенное значение |
+|---|---|---|
+| `display.useNerdFonts` | Powerline-разделители и символы Nerd Font; `false` включает упрощённое оформление | `true` |
+| `display.compactMode` | `auto`, `always` или `never`; при переполнении строка всё равно сокращается | `auto` |
+| `display.compactWidth` | Порог ширины терминала для режима `auto`, в колонках | `80` |
+| `display.rightReserve` | Дополнительное место справа, в колонках | `1` |
+| `directory.enabled`, `git.enabled`, `model.enabled`, `context.enabled` | Включить путь, Git-ветку и индикатор изменений, модель или контекст | Все `true` |
+| `block.enabled`, `weekly.enabled` | Включить лимит за 5 часов или неделю | Оба `true` |
+| `block.displayStyle`, `weekly.displayStyle` | `text` или `bar`; в недельном режиме `smart` используется полоса | Оба `text` |
+| `block.showTimeRemaining` | Время до сброса 5-часового лимита вне компактного режима | `true` |
+| `weekly.viewMode` | `simple` — общий лимит; `smart` — также отдельный лимит Sonnet, если он доступен и выбрана модель Sonnet | `simple` |
+| `weekly.showWeekProgress` | Доля прошедшей недели в режиме `simple` вне компактного режима | `true` |
+| `budget.pollInterval` | Интервал обновления API-кэша, в минутах; данные из Claude Code могут использоваться без запроса API | `15` |
+| `budget.warningThreshold` | Порог предупреждения для контекста и лимитов, в процентах | `80` |
+| `theme` | Цветовая тема | `dark` |
+| `segmentOrder` | Набор сегментов и порядок внутри групп оформления | `["directory", "git", "model", "context", "block", "weekly"]` |
+| `showTrend` | Стрелки изменения расхода ↑↓ | `true` |
 
-Токен берётся автоматически — сначала из файла (мгновенно), затем из системного хранилища:
+Темы: `dark`, `light`, `nord`, `gruvbox`, `tokyo-night`, `rose-pine`.
 
-| Платформа | Приоритет |
-|-----------|-----------|
-| **Windows** | `~/.claude/.credentials.json` → Credential Manager (PowerShell) |
-| **macOS** | `~/.claude/.credentials.json` → Keychain (поддержка hash-суффиксов) |
-| **Linux** | `~/.claude/.credentials.json` → GNOME Keyring (secret-tool) |
+Ширина полос подбирается автоматически по ширине терминала. Параметры `block.barWidth` и `weekly.barWidth` из примера не задают фиксированную ширину текущего оформления.
 
-Нужна авторизация через `claude --login`.
+### Дополнительные сегменты
 
-## Отладка
+Чтобы показать сегмент, добавьте его имя в `segmentOrder`. Следующие сегменты отсутствуют в стандартном наборе и по умолчанию относятся ко второй строке:
+
+| Имя | Что показывает |
+|---|---|
+| `prognosis` | Прогноз времени до 100% 5-часового лимита и историю расхода |
+| `cost` | Стоимость сессии в USD и число изменённых строк; скрыт при наличии данных о лимитах подписки, если не задано `cost.alwaysShow: true` |
+| `mode` | Уровень усилий и режим размышления, если Claude Code передал их |
+| `tokenBreakdown` | Приблизительное распределение токенов по содержимому транскрипта и инструментам |
+| `aggregate` | Число активных сессий, суммарную стоимость и контекст |
+
+Для любого сегмента `<имя>.enabled` включает показ (по умолчанию `true`), а `<имя>.line` выбирает строку: `1` для основных сегментов, `2` для дополнительных. `line2.enabled` (по умолчанию `true`) управляет показом второй строки.
+
+### Переменные окружения
+
+| Переменная | Назначение |
+|---|---|
+| `CLAUDE_LIMITLINE_DEBUG` | Значение `true` включает диагностический вывод в stderr; по умолчанию выключено |
+| `COLUMNS` | Ширина строки в колонках; без неё используются ширина stdout или 80 колонок |
+| `CLAUDE_MODEL`, `CLAUDE_CODE_MODEL`, `ANTHROPIC_MODEL` | Резервное имя модели, если её нет во входных данных; проверяются в указанном порядке |
+
+Данные о модели, контексте и лимитах поступают от Claude Code. Для запросов к API программа ищет OAuth-учётные данные сначала в файлах, затем в системном хранилище. Если сведения о лимитах недоступны, вместо процентов отображается `--`.
+
+## Обновление
+
+Повторно запустите `install.ps1` или `install.sh`: пакет будет переустановлен с GitHub, существующий `claude-limitline.json` сохранится, настройка `statusLine` будет задана заново.
+
+Для локальной установки обновите копию репозитория и повторите:
 
 ```bash
-# Linux/macOS
-CLAUDE_LIMITLINE_DEBUG=true morgott-statusline
-
-# Windows PowerShell
-$env:CLAUDE_LIMITLINE_DEBUG="true"; morgott-statusline
+npm i -g .
 ```
+
+Перезапустите Claude Code.
+
+## Удаление
+
+Удалите ключ `statusLine` из `~/.claude/settings.json` или замените его настройкой другой строки состояния, сохранив остальные ключи.
+
+Для Windows и локальной установки через `npm i -g .`:
+
+```bash
+npm uninstall -g morgott-statusline
+```
+
+Для установки через `install.sh`:
+
+```bash
+npm uninstall -g --prefix "$HOME/.local" morgott-statusline
+```
+
+При необходимости отдельно удалите свои файлы `claude-limitline.json` и `.claude-limitline.json`. Перезапустите Claude Code.
 
 ## Лицензия
 
-MIT — основано на [claude-limitline](https://github.com/tylergraydev/claude-limitline) by Tyler Gray
+[MIT](LICENSE). Основано на [claude-limitline](https://github.com/tylergraydev/claude-limitline) (Tyler Gray).
