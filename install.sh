@@ -83,12 +83,13 @@ if [ -f "$SETTINGS_PATH" ]; then
     if command -v node &> /dev/null; then
         node -e "
 const fs = require('fs');
-const p = '$SETTINGS_PATH';
-let s = {};
-try { s = JSON.parse(fs.readFileSync(p, 'utf-8')); } catch(e) {}
+const p = process.argv[1];
+let s;
+try { s = JSON.parse(fs.readFileSync(p, 'utf-8').replace(/^﻿/, '')); }
+catch (e) { console.error('Error: ' + p + ' is not valid JSON (left untouched). Add statusLine manually.'); process.exit(1); }
 s.statusLine = { type: 'command', command: 'morgott-statusline' };
 fs.writeFileSync(p, JSON.stringify(s, null, 2));
-"
+" "$SETTINGS_PATH"
     else
         echo '{"statusLine":{"type":"command","command":"morgott-statusline"}}' > "$SETTINGS_PATH"
     fi
