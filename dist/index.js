@@ -112,10 +112,33 @@ import { promisify } from "util";
 import fs2 from "fs";
 import path2 from "path";
 import os2 from "os";
+import crypto from "crypto";
 var execAsync = promisify(exec);
+// Claude Code keeps credentials under CLAUDE_CONFIG_DIR when set (multi-account setups).
+function claudeConfigDir() {
+  return process.env.CLAUDE_CONFIG_DIR || path2.join(os2.homedir(), ".claude");
+}
+// Stable, non-secret identity of the logged-in account: a hash of the account and
+// organization UUIDs from Claude Code's global config (never the token itself).
+// null when unknown (e.g. API-key auth) — then the legacy shared cache file is used.
+var _accountKey;
+function getAccountKey() {
+  if (_accountKey !== void 0) return _accountKey;
+  _accountKey = null;
+  const globalConfig = process.env.CLAUDE_CONFIG_DIR
+    ? path2.join(process.env.CLAUDE_CONFIG_DIR, ".claude.json")
+    : path2.join(os2.homedir(), ".claude.json");
+  try {
+    const acct = JSON.parse(fs2.readFileSync(globalConfig, "utf-8").replace(/^\uFEFF/, "")).oauthAccount;
+    if (acct?.accountUuid) {
+      _accountKey = crypto.createHash("sha256").update(`${acct.accountUuid}|${acct.organizationUuid ?? ""}`).digest("hex").slice(0, 16);
+    }
+  } catch (e) { debug(`Could not read account identity from ${globalConfig}:`, e); }
+  return _accountKey;
+}
 async function getOAuthTokenWindows() {
   // Try credentials file FIRST — instant, no PowerShell overhead
-  const primaryPath = path2.join(os2.homedir(), ".claude", ".credentials.json");
+  const primaryPath = path2.join(claudeConfigDir(), ".credentials.json");
   try {
     if (fs2.existsSync(primaryPath)) {
       const content = fs2.readFileSync(primaryPath, "utf-8");
@@ -209,7 +232,7 @@ async function findKeychainServiceName() {
 async function getOAuthTokenMacOS() {
   // Try credentials file first (instant, no shell overhead)
   const credPaths = [
-    path2.join(os2.homedir(), ".claude", ".credentials.json"),
+    path2.join(claudeConfigDir(), ".credentials.json"),
     path2.join(os2.homedir(), ".claude", "credentials.json")
   ];
   for (const credPath of credPaths) {
@@ -248,7 +271,7 @@ async function getOAuthTokenMacOS() {
 async function getOAuthTokenLinux() {
   // Try credentials file first (instant, no shell overhead)
   const configPaths = [
-    path2.join(os2.homedir(), ".claude", ".credentials.json"),
+    path2.join(claudeConfigDir(), ".credentials.json"),
     path2.join(os2.homedir(), ".claude", "credentials.json"),
     path2.join(os2.homedir(), ".config", "claude-code", "credentials.json")
   ];
@@ -387,7 +410,12 @@ var cachedUsage = null;
 var previousUsage = null;
 var cacheTimestamp = 0;
 var cachedToken = null;
-var DISK_CACHE_PATH = path2.join(os2.homedir(), ".claude", ".statusline-cache.json");
+// Limits cache is per account: after /login to another account (or a second
+// CLAUDE_CONFIG_DIR profile) the previous account's limits must not be shown.
+function getDiskCachePath() {
+  const key = getAccountKey();
+  return path2.join(os2.homedir(), ".claude", key ? `.statusline-cache.${key}.json` : ".statusline-cache.json");
+}
 var LOCK_FILE_PATH = path2.join(os2.homedir(), ".claude", ".statusline-api.lock");
 var LOCK_MAX_AGE_MS = 15000; // 15s — if lock older than this, consider it stale/crashed
 
@@ -526,7 +554,7 @@ function saveCacheToDisk(usage, prevUsage, retryAt = null) {
     const obj = { ts: Date.now(), data: usage };
     if (prevUsage) obj.prev = prevUsage;
     if (retryAt) obj.retryAt = retryAt;
-    writeFileAtomic(DISK_CACHE_PATH, JSON.stringify(obj));
+    writeFileAtomic(getDiskCachePath(), JSON.stringify(obj));
     debug("Saved usage cache to disk");
   } catch (e) { debug("Failed to save disk cache:", e); }
 }
@@ -535,8 +563,9 @@ var _lastDiskCachePrev = null;
 var _lastDiskCacheRetryAt = 0;
 function loadCacheFromDisk(maxAgeMs) {
   try {
-    if (!fs2.existsSync(DISK_CACHE_PATH)) return null;
-    const raw = JSON.parse(fs2.readFileSync(DISK_CACHE_PATH, "utf-8"));
+    const cachePath = getDiskCachePath();
+    if (!fs2.existsSync(cachePath)) return null;
+    const raw = JSON.parse(fs2.readFileSync(cachePath, "utf-8"));
     _lastDiskCacheTs = raw.ts;
     _lastDiskCacheRetryAt = typeof raw.retryAt === "number" ? raw.retryAt : 0;
     const revive = (b) => b ? { ...b, resetAt: new Date(b.resetAt) } : null;
