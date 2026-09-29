@@ -336,7 +336,10 @@ async function fetchUsageFromAPI(token) {
     });
     if (!response.ok) {
       debug(`Usage API returned status ${response.status}: ${response.statusText}`);
-      return null;
+      const retryAt = response.status === 429 || response.status === 503
+        ? parseRetryAfter(response.headers.get("retry-after"))
+        : null;
+      return { usage: null, retryAt };
     }
     const data = await response.json();
     debug("Usage API response:", JSON.stringify(data));
@@ -349,16 +352,36 @@ async function fetchUsageFromAPI(token) {
       };
     };
     return {
-      fiveHour: parseUsageBlock(data.five_hour),
-      sevenDay: parseUsageBlock(data.seven_day),
-      sevenDayOpus: parseUsageBlock(data.seven_day_opus ?? void 0),
-      sevenDaySonnet: parseUsageBlock(data.seven_day_sonnet ?? void 0),
-      raw: data
+      usage: {
+        fiveHour: parseUsageBlock(data.five_hour),
+        sevenDay: parseUsageBlock(data.seven_day),
+        sevenDayOpus: parseUsageBlock(data.seven_day_opus ?? void 0),
+        sevenDaySonnet: parseUsageBlock(data.seven_day_sonnet ?? void 0),
+        raw: data
+      },
+      retryAt: null
     };
   } catch (error) {
     debug("Failed to fetch usage from API:", error);
-    return null;
+    return { usage: null, retryAt: null };
   }
+}
+// Retry-After is either delta-seconds or an HTTP-date (RFC 9110 10.2.3). Returns the
+// epoch ms before which the API must not be queried again, or null if absent/invalid.
+var RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1e3; // cap: a bogus far-future date must not freeze the display forever
+function parseRetryAfter(value, now = Date.now()) {
+  if (!value) return null;
+  const v = String(value).trim();
+  let delayMs;
+  if (/^\d+$/.test(v)) {
+    delayMs = Number(v) * 1e3;
+  } else {
+    const at = Date.parse(v);
+    if (Number.isNaN(at)) return null;
+    delayMs = at - now;
+  }
+  if (!(delayMs > 0)) return null;
+  return now + Math.min(delayMs, RETRY_AFTER_MAX_MS);
 }
 var cachedUsage = null;
 var previousUsage = null;
@@ -498,21 +521,24 @@ function releaseLock() {
   } catch (e) { debug("Lock release error:", e); }
 }
 
-function saveCacheToDisk(usage, prevUsage) {
+function saveCacheToDisk(usage, prevUsage, retryAt = null) {
   try {
     const obj = { ts: Date.now(), data: usage };
     if (prevUsage) obj.prev = prevUsage;
+    if (retryAt) obj.retryAt = retryAt;
     writeFileAtomic(DISK_CACHE_PATH, JSON.stringify(obj));
     debug("Saved usage cache to disk");
   } catch (e) { debug("Failed to save disk cache:", e); }
 }
 var _lastDiskCacheTs = 0;
 var _lastDiskCachePrev = null;
+var _lastDiskCacheRetryAt = 0;
 function loadCacheFromDisk(maxAgeMs) {
   try {
     if (!fs2.existsSync(DISK_CACHE_PATH)) return null;
     const raw = JSON.parse(fs2.readFileSync(DISK_CACHE_PATH, "utf-8"));
     _lastDiskCacheTs = raw.ts;
+    _lastDiskCacheRetryAt = typeof raw.retryAt === "number" ? raw.retryAt : 0;
     const revive = (b) => b ? { ...b, resetAt: new Date(b.resetAt) } : null;
     if (raw.prev) {
       _lastDiskCachePrev = { fiveHour: revive(raw.prev.fiveHour), sevenDay: revive(raw.prev.sevenDay), sevenDayOpus: revive(raw.prev.sevenDayOpus), sevenDaySonnet: revive(raw.prev.sevenDaySonnet), raw: raw.prev.raw };
@@ -547,6 +573,13 @@ function getUsageTrend() {
   result.sevenDaySonnetTrend = compareTrend(cachedUsage.sevenDaySonnet, prev.sevenDaySonnet);
   return result;
 }
+// Last known values while the API must not be called: fresh-enough disk data, else
+// this process's data, else the last-known-good kept in the error entry's prev.
+function serveLastKnown(diskData) {
+  if (diskData) cachedUsage = diskData;
+  else if (!cachedUsage && _lastDiskCachePrev) cachedUsage = _lastDiskCachePrev;
+  return cachedUsage;
+}
 var _inflightPromise = null;
 async function getRealtimeUsage(pollIntervalMinutes = 15) {
   // Deduplicate concurrent calls within same process
@@ -561,6 +594,11 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
 
   // Always try disk cache first (shared across all windows/processes)
   const diskData = loadCacheFromDisk(maxDiskCacheMs);
+  if (_lastDiskCacheRetryAt > now) {
+    // Server asked us (Retry-After) not to call before this time — keep last known values.
+    debug(`Rate limited until ${new Date(_lastDiskCacheRetryAt).toISOString()}, skipping API call`);
+    return serveLastKnown(diskData);
+  }
   if (diskData) {
     const diskAge = now - _lastDiskCacheTs;
     if (diskAge < pollIntervalMs) {
@@ -601,6 +639,11 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
 
   // We hold the lock — re-check disk cache (another process may have just written it)
   const recheckData = loadCacheFromDisk(maxDiskCacheMs);
+  if (_lastDiskCacheRetryAt > now) {
+    debug("Another process got rate-limited while we acquired the lock, skipping API call");
+    releaseLock();
+    return serveLastKnown(recheckData);
+  }
   if (recheckData) {
     const recheckAge = now - _lastDiskCacheTs;
     if (recheckAge < pollIntervalMs) {
@@ -622,7 +665,7 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
         return cachedUsage;
       }
     }
-    const usage = await fetchUsageFromAPI(cachedToken);
+    const { usage, retryAt } = await fetchUsageFromAPI(cachedToken);
     if (usage) {
       previousUsage = cachedUsage;
       cachedUsage = usage;
@@ -643,7 +686,9 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
       // see a fresh timestamp and don't hammer the API (breaks 429 loop)
       // prev = newest known-good data (cachedUsage), not the older previousUsage, which
       // is null in a fresh process and would leave other windows with dashes.
-      saveCacheToDisk(null, cachedUsage || _lastDiskCachePrev);
+      // retryAt (from Retry-After) blocks every process until then, even past pollInterval.
+      saveCacheToDisk(null, cachedUsage || _lastDiskCachePrev, retryAt);
+      if (retryAt) debug(`Retry-After: next API call not before ${new Date(retryAt).toISOString()}`);
     }
   } finally {
     releaseLock();
