@@ -57,7 +57,8 @@ if (-not (Test-Path $configPath)) {
   "showTrend": true
 }
 '@
-    Set-Content -Path $configPath -Value $config -Encoding UTF8
+    # WriteAllText = UTF-8 without BOM (Set-Content -Encoding UTF8 adds a BOM on PS 5.1)
+    [System.IO.File]::WriteAllText($configPath, $config)
     Write-Host "Config created: $configPath" -ForegroundColor Green
 } else {
     Write-Host "Config already exists: $configPath (skipped)" -ForegroundColor Yellow
@@ -66,7 +67,12 @@ if (-not (Test-Path $configPath)) {
 # Update settings.json
 $settingsPath = Join-Path $claudeDir "settings.json"
 if (Test-Path $settingsPath) {
-    $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+    # -Encoding UTF8: PS 5.1 otherwise reads BOM-less files as ANSI and mangles non-ASCII
+    try { $settings = Get-Content $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop } catch { $settings = $null }
+    if ($null -eq $settings) {
+        Write-Host "Error: $settingsPath is not valid JSON (left untouched). Add statusLine manually." -ForegroundColor Red
+        exit 1
+    }
 } else {
     $settings = [PSCustomObject]@{}
 }
@@ -81,7 +87,7 @@ if ($settings.PSObject.Properties["statusLine"]) {
     $settings | Add-Member -NotePropertyName "statusLine" -NotePropertyValue $statusLine
 }
 
-$settings | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsPath -Encoding UTF8
+[System.IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 10))
 Write-Host "Settings updated: $settingsPath" -ForegroundColor Green
 
 Write-Host ""

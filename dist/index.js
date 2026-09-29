@@ -91,7 +91,9 @@ function loadConfig() {
   for (const configPath of configPaths) {
     try {
       if (fs.existsSync(configPath)) {
-        const content = fs.readFileSync(configPath, "utf-8");
+        // Strip UTF-8 BOM: Windows PowerShell 5.1 `Set-Content -Encoding UTF8` writes one,
+        // and JSON.parse rejects it, silently dropping the whole user config.
+        const content = fs.readFileSync(configPath, "utf-8").replace(/^﻿/, "");
         const userConfig = JSON.parse(content);
         debug(`Loaded config from ${configPath}`);
         return deepMerge(DEFAULT_CONFIG, userConfig);
