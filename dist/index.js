@@ -17,7 +17,6 @@ function debug(...args) {
 // src/config/types.ts
 var DEFAULT_CONFIG = {
   display: {
-    style: "powerline",
     useNerdFonts: true,
     compactMode: "auto",
     compactWidth: 80,
@@ -39,14 +38,12 @@ var DEFAULT_CONFIG = {
     enabled: true,
     line: 1,
     displayStyle: "text",
-    barWidth: 10,
     showTimeRemaining: true
   },
   weekly: {
     enabled: true,
     line: 1,
     displayStyle: "text",
-    barWidth: 10,
     showWeekProgress: true,
     viewMode: "simple"
   },
@@ -1479,7 +1476,7 @@ var Renderer = class {
     const percent = ctx.blockInfo.percentUsed;
     const colors = this.getColorsForPercent(percent, this.theme.block);
     const displayStyle = this.config.block.displayStyle || "text";
-    const barWidth = ctx.barWidth ?? this.config.block.barWidth ?? 10;
+    const barWidth = ctx.barWidth;
     const showTime = this.config.block.showTimeRemaining ?? true;
     const trend = this.getTrendSymbol(ctx.trendInfo?.fiveHourTrend ?? null);
     let text;
@@ -1513,7 +1510,7 @@ var Renderer = class {
     }
     const percent = info.percentUsed;
     const displayStyle = this.config.weekly?.displayStyle || "text";
-    const barWidth = ctx.barWidth ?? this.config.weekly?.barWidth ?? 10;
+    const barWidth = ctx.barWidth;
     const showWeekProgress = this.config.weekly?.showWeekProgress ?? true;
     const trend = this.getTrendSymbol(ctx.trendInfo?.sevenDayTrend ?? null);
     let text;
@@ -1537,7 +1534,7 @@ var Renderer = class {
     const sonnetIcon = this.usePowerline ? this.symbols.sonnet : "So";
     const currentModel = ctx.envInfo.model?.toLowerCase() ?? "";
     const isSonnet = currentModel.includes("sonnet");
-    const barWidth = ctx.barWidth ?? this.config.weekly?.barWidth ?? 8;
+    const barWidth = ctx.barWidth;
     const weeklyResetAt = info.resetAt ? new Date(info.resetAt) : null;
     const weeklyTimeRemaining = weeklyResetAt ? Math.max(0, Math.round((weeklyResetAt.getTime() - Date.now()) / (1e3 * 60))) : null;
     const weeklyTimeStr = weeklyTimeRemaining !== null ? this.formatTimeRemaining(weeklyTimeRemaining) : null;
@@ -1594,7 +1591,7 @@ var Renderer = class {
     const percent = ctx.envInfo.contextPercent;
     const icon = this.usePowerline ? this.symbols.context : "\uD83E\uDDE0";
     const colors = this.getColorsForPercent(percent, this.theme.context);
-    const bar = this.formatProgressBar(percent, ctx.barWidth ?? 10, ansi.fg(colors.fg));
+    const bar = this.formatProgressBar(percent, ctx.barWidth, ansi.fg(colors.fg));
     return {
       text: ` ${icon} ${bar} ${percent}% `,
       colors
@@ -1730,8 +1727,8 @@ var Renderer = class {
       compact,
       names
     };
-    // Shared bar bounds. The configured per-segment barWidth values are no longer a cap;
-    // bars rubber-shrink to MIN_BAR and rubber-grow up to MAX_BAR to maximize fill.
+    // Shared bar bounds. Bar width is not configurable (old block/weekly.barWidth keys
+    // are ignored); bars rubber-shrink to MIN_BAR and rubber-grow up to MAX_BAR to maximize fill.
     const MIN_BAR = 3;
     const MAX_BAR = 60;
     // fitTarget keeps a 1-cell safety margin AND reserves space on the right

@@ -27,7 +27,6 @@ if (-not (Test-Path $configPath)) {
     $config = @'
 {
   "display": {
-    "style": "powerline",
     "useNerdFonts": true,
     "compactMode": "never"
   },
@@ -37,13 +36,11 @@ if (-not (Test-Path $configPath)) {
   "block": {
     "enabled": true,
     "displayStyle": "bar",
-    "barWidth": 8,
     "showTimeRemaining": true
   },
   "weekly": {
     "enabled": true,
     "displayStyle": "bar",
-    "barWidth": 8,
     "showWeekProgress": true,
     "viewMode": "smart"
   },

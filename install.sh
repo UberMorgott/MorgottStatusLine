@@ -46,7 +46,6 @@ if [ ! -f "$CONFIG_PATH" ]; then
     cat > "$CONFIG_PATH" << 'CONF'
 {
   "display": {
-    "style": "powerline",
     "useNerdFonts": true,
     "compactMode": "never"
   },
@@ -56,13 +55,11 @@ if [ ! -f "$CONFIG_PATH" ]; then
   "block": {
     "enabled": true,
     "displayStyle": "bar",
-    "barWidth": 8,
     "showTimeRemaining": true
   },
   "weekly": {
     "enabled": true,
     "displayStyle": "bar",
-    "barWidth": 8,
     "showWeekProgress": true,
     "viewMode": "smart"
   },
