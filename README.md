@@ -32,6 +32,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 Сохраните эту строку в конфигурации вашей оболочки, чтобы настройка действовала после её перезапуска.
 
+Если во время установки каталог с командой не найден в `PATH`, скрипт записывает в `statusLine` абсолютный путь: `install.sh` — путь к `~/.local/bin/morgott-statusline`, `install.ps1` — `node "<глобальный node_modules>/morgott-statusline/dist/index.js"`.
+
 **Установка локальной копии без скриптов:**
 
 ```bash

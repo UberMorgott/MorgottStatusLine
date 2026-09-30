@@ -77,9 +77,18 @@ if (Test-Path $settingsPath) {
     $settings = [PSCustomObject]@{}
 }
 
+# A bare command only works if npm's global bin dir is on PATH. Otherwise write
+# node + absolute script path (forward slashes, quoted) - valid in cmd, bash and pwsh.
+$statusCmd = "morgott-statusline"
+if (-not (Get-Command morgott-statusline -ErrorAction SilentlyContinue)) {
+    $scriptPath = Join-Path (npm root -g).Trim() "morgott-statusline\dist\index.js"
+    $statusCmd = 'node "{0}"' -f ($scriptPath -replace '\\', '/')
+    Write-Host "Warning: npm global bin dir is not in PATH; settings.json will use: $statusCmd" -ForegroundColor Yellow
+}
+
 $statusLine = [PSCustomObject]@{
     type = "command"
-    command = "morgott-statusline"
+    command = $statusCmd
 }
 if ($settings.PSObject.Properties["statusLine"]) {
     $settings.statusLine = $statusLine

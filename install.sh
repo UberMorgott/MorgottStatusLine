@@ -15,10 +15,14 @@ fi
 echo -e "\033[33mInstalling package from GitHub...\033[0m"
 npm install -g --prefix "$HOME/.local" --force "github:UberMorgott/MorgottStatusLine"
 
-# Check if ~/.local/bin is in PATH
-if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
+# Check if ~/.local/bin is in PATH. If not, a bare command in settings.json would not
+# resolve, so write the absolute path (quoted: $HOME may contain spaces).
+BIN_DIR="$HOME/.local/bin"
+STATUS_CMD="morgott-statusline"
+if ! echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then
+    STATUS_CMD="\"$BIN_DIR/morgott-statusline\""
     echo ""
-    echo -e "\033[33mWarning: ~/.local/bin is not in your PATH.\033[0m"
+    echo -e "\033[33mWarning: ~/.local/bin is not in your PATH; settings.json will use the absolute path.\033[0m"
     echo -e "\033[33mAdd it to your shell config:\033[0m"
     echo ""
     echo -e "  \033[90m# bash (~/.bashrc)\033[0m"
@@ -79,6 +83,9 @@ fi
 
 # Update settings.json
 SETTINGS_PATH="$CLAUDE_DIR/settings.json"
+# JSON-escape the command for the no-node fallback (backslashes, then quotes).
+STATUS_CMD_JSON="${STATUS_CMD//\\/\\\\}"
+STATUS_CMD_JSON="${STATUS_CMD_JSON//\"/\\\"}"
 if [ -f "$SETTINGS_PATH" ]; then
     if command -v node &> /dev/null; then
         node -e "
@@ -87,14 +94,14 @@ const p = process.argv[1];
 let s;
 try { s = JSON.parse(fs.readFileSync(p, 'utf-8').replace(/^﻿/, '')); }
 catch (e) { console.error('Error: ' + p + ' is not valid JSON (left untouched). Add statusLine manually.'); process.exit(1); }
-s.statusLine = { type: 'command', command: 'morgott-statusline' };
+s.statusLine = { type: 'command', command: process.argv[2] };
 fs.writeFileSync(p, JSON.stringify(s, null, 2));
-" "$SETTINGS_PATH"
+" "$SETTINGS_PATH" "$STATUS_CMD"
     else
-        echo '{"statusLine":{"type":"command","command":"morgott-statusline"}}' > "$SETTINGS_PATH"
+        printf '{"statusLine":{"type":"command","command":"%s"}}\n' "$STATUS_CMD_JSON" > "$SETTINGS_PATH"
     fi
 else
-    echo '{"statusLine":{"type":"command","command":"morgott-statusline"}}' > "$SETTINGS_PATH"
+    printf '{"statusLine":{"type":"command","command":"%s"}}\n' "$STATUS_CMD_JSON" > "$SETTINGS_PATH"
 fi
 
 echo -e "\033[32mSettings updated: $SETTINGS_PATH\033[0m"
