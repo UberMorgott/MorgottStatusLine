@@ -408,7 +408,6 @@ function parseRetryAfter(value, now = Date.now()) {
 }
 var cachedUsage = null;
 var previousUsage = null;
-var cacheTimestamp = 0;
 var cachedToken = null;
 // Limits cache is per account: after /login to another account (or a second
 // CLAUDE_CONFIG_DIR profile) the previous account's limits must not be shown.
@@ -528,7 +527,7 @@ function acquireLock() {
           return acquireLock(); // retry once
         }
         debug(`Lock held (age: ${age}ms), skipping API call`);
-      } catch (readErr) {
+      } catch {
         debug("Could not read lock file, skipping API call");
       }
       return false;
@@ -634,7 +633,6 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
       // Disk cache is fresh — use it, no API call needed
       if (!cachedUsage) previousUsage = cachedUsage;
       cachedUsage = diskData;
-      cacheTimestamp = now;
       debug(`Using fresh disk cache (age: ${Math.round(diskAge / 1e3)}s)`);
       return cachedUsage;
     }
@@ -658,11 +656,11 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
   if (!gotLock) {
     // Another process is fetching — return stale data (it will be refreshed soon)
     debug("Another process is fetching, using stale cache");
-    if (cachedUsage) { cacheTimestamp = now; return cachedUsage; }
+    if (cachedUsage) return cachedUsage;
     // No data at all — wait briefly for the other process to finish
     await new Promise(r => setTimeout(r, 2000));
     const freshData = loadCacheFromDisk(maxDiskCacheMs);
-    if (freshData) { cachedUsage = freshData; cacheTimestamp = now; return cachedUsage; }
+    if (freshData) { cachedUsage = freshData; return cachedUsage; }
     return null;
   }
 
@@ -678,7 +676,6 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
     if (recheckAge < pollIntervalMs) {
       debug("Cache refreshed by another process while acquiring lock");
       cachedUsage = recheckData;
-      cacheTimestamp = now;
       releaseLock();
       return cachedUsage;
     }
@@ -690,7 +687,6 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
       cachedToken = await getOAuthToken();
       if (!cachedToken) {
         debug("Could not retrieve OAuth token for realtime usage");
-        if (cachedUsage) { cacheTimestamp = now; }
         return cachedUsage;
       }
     }
@@ -698,18 +694,15 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
     if (usage) {
       previousUsage = cachedUsage;
       cachedUsage = usage;
-      cacheTimestamp = now;
       saveCacheToDisk(usage, previousUsage);
       debug("Refreshed realtime usage cache (locked)");
     } else {
       // API failed (429, network error, etc.) — extend stale data lifetime
       debug("API failed, returning stale cached data");
-      if (cachedUsage) {
-        cacheTimestamp = now;
-      } else {
+      if (!cachedUsage) {
         const stale = loadCacheFromDisk(maxDiskCacheMs);
-        if (stale) { cachedUsage = stale; cacheTimestamp = now; }
-        else if (_lastDiskCachePrev) { cachedUsage = _lastDiskCachePrev; cacheTimestamp = now; }
+        if (stale) cachedUsage = stale;
+        else if (_lastDiskCachePrev) cachedUsage = _lastDiskCachePrev;
       }
       // Write a cache entry to disk even on failure, so other processes
       // see a fresh timestamp and don't hammer the API (breaks 429 loop)
@@ -1046,7 +1039,6 @@ var WeeklyProvider = class {
 // src/utils/constants.ts
 var SYMBOLS = {
   right: "\uE0B0",
-  left: "\uE0B2",
   branch: "\uE0A0",
   separator: "\uE0B1",
   model: "\u2731",
@@ -1055,12 +1047,8 @@ var SYMBOLS = {
   // Stopwatch ⏱️
   weekly_cost: "\uD83D\uDCC5",
   // Calendar 📅
-  opus_cost: "\u25C8",
-  // Diamond with dot ◈
   sonnet_cost: "\u25C7",
   // White diamond ◇
-  bottleneck: "\u25B2",
-  // Black up-pointing triangle ▲
   progress_full: "\u2588",
   // Full block
   progress_empty: "\u2591"
@@ -1068,35 +1056,18 @@ var SYMBOLS = {
 };
 var TEXT_SYMBOLS = {
   right: ">",
-  left: "<",
   branch: "",
   separator: "|",
   model: "*",
   block_cost: "\u23F1\uFE0F",
   weekly_cost: "\uD83D\uDCC5",
-  opus_cost: "Op",
   sonnet_cost: "So",
-  bottleneck: "*",
   progress_full: "#",
   progress_empty: "-"
 };
 var RESET_CODE = "\x1B[0m";
 
 // src/themes/index.ts
-function hexToAnsi256(hex) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  if (r === g && g === b) {
-    if (r < 8) return 16;
-    if (r > 248) return 231;
-    return Math.round((r - 8) / 247 * 24) + 232;
-  }
-  const ri = Math.round(r / 255 * 5);
-  const gi = Math.round(g / 255 * 5);
-  const bi = Math.round(b / 255 * 5);
-  return 16 + 36 * ri + 6 * gi + bi;
-}
 function hexToRgb(hex) {
   return {
     r: parseInt(hex.slice(1, 3), 16),
@@ -1113,8 +1084,6 @@ var ansi = {
     const { r, g, b } = hexToRgb(hex);
     return `\x1B[48;2;${r};${g};${b}m`;
   },
-  fgRaw: (n) => `\x1B[38;5;${n}m`,
-  bgRaw: (n) => `\x1B[48;5;${n}m`,
   reset: "\x1B[0m"
 };
 var darkTheme = {
@@ -1266,11 +1235,8 @@ var Renderer = class {
     this.symbols = {
       block: symbolSet.block_cost,
       weekly: symbolSet.weekly_cost,
-      opus: symbolSet.opus_cost,
       sonnet: symbolSet.sonnet_cost,
-      bottleneck: symbolSet.bottleneck,
       rightArrow: symbolSet.right,
-      leftArrow: symbolSet.left,
       separator: symbolSet.separator,
       branch: symbolSet.branch,
       model: symbolSet.model,
@@ -1313,7 +1279,7 @@ var Renderer = class {
     bar += (bgCode || "");
     return bar;
   }
-  formatTimeRemaining(minutes, compact) {
+  formatTimeRemaining(minutes) {
     const days = Math.floor(minutes / 1440);
     const hours = Math.floor((minutes % 1440) / 60);
     const mins = minutes % 60;
@@ -1333,7 +1299,7 @@ var Renderer = class {
     if (fiveEta == null) {
       text = `${icon} 5ч стаб.`;
     } else {
-      const t = this.formatTimeRemaining(fiveEta, false);
+      const t = this.formatTimeRemaining(fiveEta);
       text = `${icon} 5ч→100% ~${t}`;
     }
     if (spark) text += ` ${spark}`;
@@ -1370,18 +1336,6 @@ var Renderer = class {
       } else {
         output += ansi.fg(seg.colors.bg) + this.symbols.rightArrow;
       }
-    }
-    output += RESET_CODE;
-    return output;
-  }
-  renderRightPowerline(segments) {
-    if (segments.length === 0) return "";
-    let output = "";
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
-      output += RESET_CODE;
-      output += ansi.fg(seg.colors.bg) + this.symbols.leftArrow;
-      output += ansi.bg(seg.colors.bg) + ansi.fg(seg.colors.fg) + seg.text;
     }
     output += RESET_CODE;
     return output;
@@ -1488,7 +1442,7 @@ var Renderer = class {
       text = `${Math.round(percent)}%${trend}`;
     }
     if (showTime && ctx.blockInfo.timeRemaining !== null && !ctx.compact) {
-      const timeStr = this.formatTimeRemaining(ctx.blockInfo.timeRemaining, ctx.compact);
+      const timeStr = this.formatTimeRemaining(ctx.blockInfo.timeRemaining);
       text += ` (${timeStr})`;
     }
     return {
@@ -1529,13 +1483,12 @@ var Renderer = class {
     const info = ctx.weeklyInfo;
     const overallIcon = this.usePowerline ? this.symbols.weekly : "All";
     const sonnetIcon = this.usePowerline ? this.symbols.sonnet : "So";
-    const showWeekProgress = this.config.weekly?.showWeekProgress ?? true;
     const currentModel = ctx.envInfo.model?.toLowerCase() ?? "";
     const isSonnet = currentModel.includes("sonnet");
     const barWidth = ctx.barWidth ?? this.config.weekly?.barWidth ?? 8;
     const weeklyResetAt = info.resetAt ? new Date(info.resetAt) : null;
     const weeklyTimeRemaining = weeklyResetAt ? Math.max(0, Math.round((weeklyResetAt.getTime() - Date.now()) / (1e3 * 60))) : null;
-    const weeklyTimeStr = weeklyTimeRemaining !== null ? this.formatTimeRemaining(weeklyTimeRemaining, ctx.compact) : null;
+    const weeklyTimeStr = weeklyTimeRemaining !== null ? this.formatTimeRemaining(weeklyTimeRemaining) : null;
     if (isSonnet && info.sonnetPercentUsed !== null && info.percentUsed !== null) {
       const sonnetTrend = this.getTrendSymbol(ctx.trendInfo?.sevenDaySonnetTrend ?? null);
       const overallTrend = this.getTrendSymbol(ctx.trendInfo?.sevenDayTrend ?? null);
@@ -1788,7 +1741,6 @@ var Renderer = class {
 
 // src/utils/environment.ts
 import { execSync } from "child_process";
-import { basename } from "path";
 
 // src/utils/claude-hook.ts
 var STDIN_TIMEOUT_MS = 1500;
