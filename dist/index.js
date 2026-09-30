@@ -1853,9 +1853,14 @@ function getDirectoryName(hookData) {
     return null;
   }
 }
-function getGitBranch() {
+// Git runs in the session's current directory, not wherever the statusline process started.
+function getGitCwd(hookData) {
+  return hookData?.workspace?.current_dir || hookData?.cwd || undefined;
+}
+function getGitBranch(cwd) {
   try {
     const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"]
     }).trim();
@@ -1865,9 +1870,10 @@ function getGitBranch() {
     return null;
   }
 }
-function hasGitChanges() {
+function hasGitChanges(cwd) {
   try {
     const status = execSync("git status --porcelain", {
+      cwd,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"]
     }).trim();
@@ -1902,10 +1908,11 @@ function getContextPercent(hookData) {
 }
 function getEnvironmentInfo(hookData, config) {
   const gitEnabled = config?.git?.enabled ?? true;
+  const gitCwd = getGitCwd(hookData);
   return {
     directory: getDirectoryName(hookData),
-    gitBranch: gitEnabled ? getGitBranch() : null,
-    gitDirty: gitEnabled ? hasGitChanges() : false,
+    gitBranch: gitEnabled ? getGitBranch(gitCwd) : null,
+    gitDirty: gitEnabled ? hasGitChanges(gitCwd) : false,
     model: getClaudeModel(hookData),
     contextPercent: getContextPercent(hookData),
     hasRateLimits: !!(hookData?.rate_limits?.five_hour || hookData?.rate_limits?.seven_day),
