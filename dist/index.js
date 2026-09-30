@@ -122,7 +122,7 @@ function homeCredentialPaths(paths) {
 }
 // Stable, non-secret identity of the logged-in account: a hash of the account and
 // organization UUIDs from Claude Code's global config (never the token itself).
-// null when unknown (e.g. API-key auth) — then the legacy shared cache file is used.
+// null when unknown (e.g. API-key auth) — then state files are keyed by config dir.
 var _accountKey;
 function getAccountKey() {
   if (_accountKey !== void 0) return _accountKey;
@@ -427,10 +427,11 @@ var previousUsage = null;
 var cachedToken = null;
 // Usage state (limits cache, usage history) is per account: after /login to another
 // account (or a second CLAUDE_CONFIG_DIR profile) the previous account's data must not
-// be shown. The unkeyed name is used only while the account is unknown.
+// be shown. With the account unknown (e.g. API-key auth) the key is the config dir, so
+// keyless profiles stay apart and never reuse the legacy unkeyed names.
 function accountStatePath(base) {
-  const key = getAccountKey();
-  return path2.join(os2.homedir(), ".claude", key ? `${base}.${key}.json` : `${base}.json`);
+  const key = getAccountKey() ?? `dir-${crypto.createHash("sha256").update(claudeConfigDir()).digest("hex").slice(0, 16)}`;
+  return path2.join(os2.homedir(), ".claude", `${base}.${key}.json`);
 }
 function getDiskCachePath() {
   return accountStatePath(".statusline-cache");
@@ -503,11 +504,10 @@ function appendHistory(five, seven) {
   } catch (e) { debug("history append error:", e); return loadHistory() ?? []; }
 }
 
-// Pre-per-account builds kept unkeyed files shared by every account. Once the account
-// is known they are orphaned (and may mix accounts' data), so delete them.
+// Pre-per-account builds kept unkeyed files shared by every account. Nothing reads
+// them any more and they may mix accounts' data, so delete them.
 var LEGACY_STATE_BASES = [".statusline-cache", ".statusline-history"];
 function removeLegacyStateFiles() {
-  if (!getAccountKey()) return;
   for (const base of LEGACY_STATE_BASES) {
     const legacyPath = path2.join(os2.homedir(), ".claude", `${base}.json`);
     try {
