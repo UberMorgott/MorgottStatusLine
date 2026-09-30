@@ -428,11 +428,15 @@ function parseRetryAfter(value, now = Date.now()) {
 var cachedUsage = null;
 var previousUsage = null;
 var cachedToken = null;
-// Limits cache is per account: after /login to another account (or a second
-// CLAUDE_CONFIG_DIR profile) the previous account's limits must not be shown.
-function getDiskCachePath() {
+// Usage state (limits cache, usage history) is per account: after /login to another
+// account (or a second CLAUDE_CONFIG_DIR profile) the previous account's data must not
+// be shown. The unkeyed name is used only while the account is unknown.
+function accountStatePath(base) {
   const key = getAccountKey();
-  return path2.join(os2.homedir(), ".claude", key ? `.statusline-cache.${key}.json` : ".statusline-cache.json");
+  return path2.join(os2.homedir(), ".claude", key ? `${base}.${key}.json` : `${base}.json`);
+}
+function getDiskCachePath() {
+  return accountStatePath(".statusline-cache");
 }
 var LOCK_FILE_PATH = path2.join(os2.homedir(), ".claude", ".statusline-api.lock");
 var LOCK_MAX_AGE_MS = 15000; // 15s — if lock older than this, consider it stale/crashed
@@ -465,15 +469,21 @@ function writeFileAtomic(filePath, data) {
 }
 
 // src/utils/history.ts
-var HISTORY_PATH = path2.join(os2.homedir(), ".claude", ".statusline-history.json");
+// Ring buffer of 5h/7d usage samples from the hook's rate_limits. It is the only trend
+// source when Claude Code supplies the limits (no API call, so getUsageTrend has no
+// previous value): it drives the ↑↓ arrows and the prognosis segment (ETA + sparkline).
 var HISTORY_MAX = 30;
 var HISTORY_MIN_GAP_MS = 60 * 1000;
+function getHistoryPath() {
+  return accountStatePath(".statusline-history");
+}
 
 // Returns [] when the file is missing, null when it exists but is unreadable/corrupt.
 function loadHistory() {
+  const historyPath = getHistoryPath();
   try {
-    if (!fs2.existsSync(HISTORY_PATH)) return [];
-    const arr = JSON.parse(fs2.readFileSync(HISTORY_PATH, "utf-8"));
+    if (!fs2.existsSync(historyPath)) return [];
+    const arr = JSON.parse(fs2.readFileSync(historyPath, "utf-8"));
     return Array.isArray(arr) ? arr : null;
   } catch (e) { debug("history load error:", e); return null; }
 }
@@ -491,9 +501,25 @@ function appendHistory(five, seven) {
     if (five == null && seven == null) return hist;
     hist.push({ ts: now, five, seven });
     while (hist.length > HISTORY_MAX) hist.shift();
-    writeFileAtomic(HISTORY_PATH, JSON.stringify(hist));
+    writeFileAtomic(getHistoryPath(), JSON.stringify(hist));
     return hist;
   } catch (e) { debug("history append error:", e); return loadHistory() ?? []; }
+}
+
+// Pre-per-account builds kept one unkeyed file shared by every account. Once the
+// account is known it is orphaned (and may mix accounts' samples), so delete it.
+var LEGACY_STATE_BASES = [".statusline-history"];
+function removeLegacyStateFiles() {
+  if (!getAccountKey()) return;
+  for (const base of LEGACY_STATE_BASES) {
+    const legacyPath = path2.join(os2.homedir(), ".claude", `${base}.json`);
+    try {
+      fs2.unlinkSync(legacyPath);
+      debug(`Removed legacy state file ${legacyPath}`);
+    } catch (e) {
+      if (e.code !== "ENOENT") debug(`Could not remove legacy state file ${legacyPath}:`, e);
+    }
+  }
 }
 
 function trendFromHistory(hist, key) {
@@ -1953,7 +1979,8 @@ async function main() {
     debug("Block info:", JSON.stringify(blockInfo));
     debug("Weekly info:", JSON.stringify(weeklyInfo));
     let trendInfo = config.showTrend ? getUsageTrend() : null;
-    const hist = appendHistory(envInfo.fiveHourPercent, envInfo.sevenDayPercent);
+    removeLegacyStateFiles();
+    const hist =appendHistory(envInfo.fiveHourPercent, envInfo.sevenDayPercent);
     if (hist && hist.length >= 2) {
       if (!trendInfo || typeof trendInfo !== "object") {
         trendInfo = { fiveHourTrend: null, sevenDayTrend: null, sevenDayOpusTrend: null, sevenDaySonnetTrend: null };
