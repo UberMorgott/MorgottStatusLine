@@ -1863,15 +1863,12 @@ function formatModelName(modelId, displayName) {
 }
 
 // src/utils/environment.ts
+// Hook fields (code.claude.com/docs/en/statusline): workspace.project_dir = launch dir,
+// workspace.current_dir (same as legacy cwd) = current dir. The process cwd is only a
+// last resort: the statusline process may run elsewhere.
 function getDirectoryName(hookData) {
   try {
-    if (hookData?.workspace?.project_dir) {
-      return hookData.workspace.project_dir;
-    }
-    if (hookData?.cwd) {
-      return hookData.cwd;
-    }
-    return process.cwd();
+    return hookData?.workspace?.project_dir || hookData?.workspace?.current_dir || hookData?.cwd || process.cwd();
   } catch (error) {
     debug("Error getting directory name:", error);
     return null;
