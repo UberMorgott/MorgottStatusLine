@@ -961,27 +961,6 @@ var BlockProvider = class {
 
 // src/segments/weekly.ts
 var WeeklyProvider = class {
-  calculateWeekProgress(resetDay, resetHour, resetMinute) {
-    const now = /* @__PURE__ */ new Date();
-    const dayOfWeek = now.getDay();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const targetDay = resetDay ?? 1;
-    const targetHour = resetHour ?? 0;
-    const targetMinute = resetMinute ?? 0;
-    let daysSinceReset = (dayOfWeek - targetDay + 7) % 7;
-    if (daysSinceReset === 0) {
-      const currentMinutes = hours * 60 + minutes;
-      const resetMinutes = targetHour * 60 + targetMinute;
-      if (currentMinutes < resetMinutes) {
-        daysSinceReset = 7;
-      }
-    }
-    const hoursIntoWeek = daysSinceReset * 24 + hours - targetHour + (minutes - targetMinute) / 60;
-    const totalHoursInWeek = 7 * 24;
-    const progress = Math.max(0, Math.min(100, hoursIntoWeek / totalHoursInWeek * 100));
-    return Math.round(progress);
-  }
   calculateWeekProgressFromResetTime(resetAt) {
     const now = /* @__PURE__ */ new Date();
     const resetTime = new Date(resetAt);
@@ -1000,7 +979,7 @@ var WeeklyProvider = class {
     const progress = Math.max(0, Math.min(100, elapsedMs / totalMs * 100));
     return Math.round(progress);
   }
-  async getWeeklyInfo(resetDay, resetHour, resetMinute, pollInterval, stdinUsage, needPerModel) {
+  async getWeeklyInfo(pollInterval, stdinUsage, needPerModel) {
     let stdinInfo = null;
     if (stdinUsage?.sevenDay) {
       const sevenDay = stdinUsage.sevenDay;
@@ -1031,13 +1010,12 @@ var WeeklyProvider = class {
     }
     // API unavailable (429 etc.) in per-model mode: show the hook total, not dashes.
     if (stdinInfo) return stdinInfo;
-    debug("Realtime mode failed, falling back to estimate mode");
-    const weekProgressPercent = this.calculateWeekProgress(resetDay, resetHour, resetMinute);
+    debug("Realtime mode failed, no weekly data available");
     return {
       percentUsed: null,
       resetAt: null,
       isRealtime: false,
-      weekProgressPercent,
+      weekProgressPercent: null,
       opusPercentUsed: null,
       sonnetPercentUsed: null,
       opusResetAt: null,
@@ -1966,9 +1944,6 @@ async function main() {
     const [blockInfo, weeklyInfo] = await Promise.all([
       config.block?.enabled ? blockProvider.getBlockInfo(pollInterval, stdinUsage) : null,
       config.weekly?.enabled ? weeklyProvider.getWeeklyInfo(
-        config.budget?.resetDay,
-        config.budget?.resetHour,
-        config.budget?.resetMinute,
         pollInterval,
         stdinUsage,
         needPerModel
