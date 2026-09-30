@@ -506,9 +506,9 @@ function appendHistory(five, seven) {
   } catch (e) { debug("history append error:", e); return loadHistory() ?? []; }
 }
 
-// Pre-per-account builds kept one unkeyed file shared by every account. Once the
-// account is known it is orphaned (and may mix accounts' samples), so delete it.
-var LEGACY_STATE_BASES = [".statusline-history"];
+// Pre-per-account builds kept unkeyed files shared by every account. Once the account
+// is known they are orphaned (and may mix accounts' data), so delete them.
+var LEGACY_STATE_BASES = [".statusline-cache", ".statusline-history"];
 function removeLegacyStateFiles() {
   if (!getAccountKey()) return;
   for (const base of LEGACY_STATE_BASES) {
