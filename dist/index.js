@@ -118,6 +118,11 @@ var execAsync = promisify(exec);
 function claudeConfigDir() {
   return process.env.CLAUDE_CONFIG_DIR || path2.join(os2.homedir(), ".claude");
 }
+// Legacy home-dir credential files belong to the default profile: with CLAUDE_CONFIG_DIR
+// set they hold another account's token, whose limits would be cached under this account.
+function homeCredentialPaths(paths) {
+  return process.env.CLAUDE_CONFIG_DIR ? [] : paths;
+}
 // Stable, non-secret identity of the logged-in account: a hash of the account and
 // organization UUIDs from Claude Code's global config (never the token itself).
 // null when unknown (e.g. API-key auth) — then the legacy shared cache file is used.
@@ -154,12 +159,12 @@ async function getOAuthTokenWindows() {
   } catch (error) {
     debug(`Failed to read config from ${primaryPath}:`, error);
   }
-  const fallbackPaths = [
+  const fallbackPaths = homeCredentialPaths([
     path2.join(os2.homedir(), ".claude", "credentials.json"),
     path2.join(os2.homedir(), ".config", "claude-code", "credentials.json"),
     path2.join(process.env.APPDATA || "", "Claude Code", "credentials.json"),
     path2.join(process.env.LOCALAPPDATA || "", "Claude Code", "credentials.json")
-  ];
+  ]);
   for (const configPath of fallbackPaths) {
     try {
       if (fs2.existsSync(configPath)) {
@@ -233,7 +238,7 @@ async function getOAuthTokenMacOS() {
   // Try credentials file first (instant, no shell overhead)
   const credPaths = [
     path2.join(claudeConfigDir(), ".credentials.json"),
-    path2.join(os2.homedir(), ".claude", "credentials.json")
+    ...homeCredentialPaths([path2.join(os2.homedir(), ".claude", "credentials.json")])
   ];
   for (const credPath of credPaths) {
     try {
@@ -272,8 +277,10 @@ async function getOAuthTokenLinux() {
   // Try credentials file first (instant, no shell overhead)
   const configPaths = [
     path2.join(claudeConfigDir(), ".credentials.json"),
-    path2.join(os2.homedir(), ".claude", "credentials.json"),
-    path2.join(os2.homedir(), ".config", "claude-code", "credentials.json")
+    ...homeCredentialPaths([
+      path2.join(os2.homedir(), ".claude", "credentials.json"),
+      path2.join(os2.homedir(), ".config", "claude-code", "credentials.json")
+    ])
   ];
   for (const configPath of configPaths) {
     try {
@@ -427,6 +434,8 @@ var _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
 function writeFileAtomic(filePath, data) {
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   try {
+    // ~/.claude may not exist when Claude Code runs with CLAUDE_CONFIG_DIR elsewhere.
+    fs2.mkdirSync(path2.dirname(filePath), { recursive: true });
     fs2.writeFileSync(tmp, data, "utf-8");
     for (let attempt = 0; ; attempt++) {
       try { fs2.renameSync(tmp, filePath); return; }
@@ -508,6 +517,7 @@ function projectMinutesTo100(hist, key) {
 
 function acquireLock() {
   try {
+    fs2.mkdirSync(path2.dirname(LOCK_FILE_PATH), { recursive: true });
     // O_EXCL — atomic create, fails if file exists
     const fd = fs2.openSync(LOCK_FILE_PATH, fs2.constants.O_CREAT | fs2.constants.O_EXCL | fs2.constants.O_WRONLY);
     fs2.writeSync(fd, JSON.stringify({ pid: process.pid, ts: Date.now() }));
