@@ -182,7 +182,9 @@ async function getOAuthTokenWindows() {
       debug(`Failed to read config from ${configPath}:`, error);
     }
   }
-  // PowerShell fallback — only if file-based retrieval failed
+  // PowerShell fallback — only if file-based retrieval failed. The Credential Manager
+  // entry is not tied to a CLAUDE_CONFIG_DIR profile, so skip it for custom profiles.
+  if (process.env.CLAUDE_CONFIG_DIR) return null;
   try {
     const { stdout } = await execAsync(
       `powershell -Command "[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((Get-StoredCredential -Target 'Claude Code' -AsCredentialObject).Password))"`,
@@ -253,9 +255,18 @@ async function getOAuthTokenMacOS() {
     } catch (e) { debug(`Failed to read ${credPath}:`, e); }
   }
   // Keychain fallback — supports hash-suffixed service names (e.g. Claude Code-credentials-697375ae)
-  const serviceName = await findKeychainServiceName();
-  const names = [serviceName];
-  if (serviceName !== "Claude Code-credentials") names.push("Claude Code-credentials");
+  let names;
+  if (process.env.CLAUDE_CONFIG_DIR) {
+    // Custom profile: only its own entry. Claude Code names it
+    // "Claude Code-credentials-" + sha256(NFC config dir).hex[0..8] (seen in 2.1.x).
+    // Guessing another entry could return a different account's token.
+    const dirHash = crypto.createHash("sha256").update(process.env.CLAUDE_CONFIG_DIR.normalize("NFC")).digest("hex").slice(0, 8);
+    names = [`Claude Code-credentials-${dirHash}`];
+  } else {
+    const serviceName = await findKeychainServiceName();
+    names = [serviceName];
+    if (serviceName !== "Claude Code-credentials") names.push("Claude Code-credentials");
+  }
   for (const name of names) {
     try {
       const { stdout } = await execAsync(
@@ -303,7 +314,8 @@ async function getOAuthTokenLinux() {
       debug(`Failed to read config from ${configPath}:`, error);
     }
   }
-  // GNOME Keyring fallback
+  // GNOME Keyring fallback — not tied to a CLAUDE_CONFIG_DIR profile, skip for custom profiles.
+  if (process.env.CLAUDE_CONFIG_DIR) return null;
   try {
     const { stdout } = await execAsync(
       `secret-tool lookup service "Claude Code"`,
