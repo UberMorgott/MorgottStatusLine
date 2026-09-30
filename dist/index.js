@@ -1274,6 +1274,10 @@ var Renderer = class {
   theme;
   symbols;
   usePowerline;
+  // Per-render sidecar data, set by main() before render().
+  history = [];
+  tokenSums = null;
+  aggregate = null;
   constructor(config) {
     this.config = config;
     this.theme = getTheme(config.theme || "dark");
@@ -1337,7 +1341,7 @@ var Renderer = class {
     if (mins > 0 && days === 0) parts.push(`${mins}\u043C`);
     return parts.length > 0 ? parts.join("") : "0\u043C";
   }
-  renderPrognosis(ctx) {
+  renderPrognosis() {
     if (!this.config.prognosis?.enabled) return null;
     const hist = this.history || [];
     const fiveEta = projectMinutesTo100(hist, "five");
@@ -1596,7 +1600,7 @@ var Renderer = class {
       colors
     };
   }
-  renderTokens(ctx) {
+  renderTokens() {
     if (!this.config.tokenBreakdown?.enabled) return null;
     const sums = this.tokenSums;
     if (!sums) return null;
@@ -1638,13 +1642,13 @@ var Renderer = class {
       case "context":
         return this.renderContext(ctx);
       case "prognosis":
-        return this.renderPrognosis(ctx);
+        return this.renderPrognosis();
       case "cost":
         return this.renderCost(ctx);
       case "mode":
         return this.renderMode(ctx);
       case "tokenBreakdown":
-        return this.renderTokens(ctx);
+        return this.renderTokens();
       case "aggregate":
         return this.renderAggregate(ctx);
       default:
