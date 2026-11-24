@@ -359,6 +359,98 @@ function buildUsageFromHook(hookData) {
     sevenDay: parse(rl.seven_day)
   };
 }
+function isAntigravityHook(hookData) {
+  return hookData?.product === "antigravity";
+}
+function buildUsageFromAntigravity(hookData) {
+  const quota = hookData?.quota;
+  if (!quota || typeof quota !== "object") return null;
+  const activeModel = `${hookData?.model?.id || ""} ${hookData?.model?.display_name || ""}`.toLowerCase();
+  let activeFamily = null;
+  if (/\bgemini\b/.test(activeModel)) activeFamily = "gemini";
+  else if (/\b(claude|opus|sonnet|haiku)\b/.test(activeModel)) activeFamily = "claude";
+  else if (/\b(gpt|openai|o[134])\b/.test(activeModel)) activeFamily = "gpt";
+  const subTiers = ["pro", "flash", "ultra", "neon", "argon", "opus", "sonnet", "haiku"]
+    .filter((t) => new RegExp(`\\b${t}\\b`).test(activeModel));
+
+  const familyMatchScore = (idLower) => {
+    if (!activeFamily) return 2;
+    const hasGemini = /(?:^|[^a-z])gemini(?:$|[^a-z])/.test(idLower);
+    const hasClaude = /(?:^|[^a-z])(claude|anthropic|opus|sonnet|haiku)(?:$|[^a-z])/.test(idLower);
+    const hasGpt = /(?:^|[^a-z])(gpt|openai)(?:$|[^a-z])/.test(idLower);
+    const matchesActive =
+      (activeFamily === "gemini" && hasGemini) ||
+      (activeFamily === "claude" && hasClaude) ||
+      (activeFamily === "gpt" && hasGpt);
+    if (matchesActive) {
+      const matchesTier = subTiers.some((t) => new RegExp(`(?:^|[^a-z])${t}(?:$|[^a-z])`).test(idLower));
+      return matchesTier ? 4 : 3;
+    }
+    const matchesOther = hasGemini || hasClaude || hasGpt;
+    return matchesOther ? 0 : 2;
+  };
+
+  const nowMs = Date.now();
+  const fiveHourCandidates = [];
+  const sevenDayCandidates = [];
+
+  for (const [bucketId, info] of Object.entries(quota)) {
+    if (!info || typeof info !== "object" || info.disabled) continue;
+    if (typeof info.remaining_fraction !== "number" || !Number.isFinite(info.remaining_fraction)) continue;
+
+    let resetAt = null;
+    let resetSec = null;
+    if (typeof info.reset_time === "string" && info.reset_time) {
+      const parsed = new Date(info.reset_time);
+      if (!Number.isNaN(parsed.getTime())) {
+        resetAt = parsed;
+        resetSec = (parsed.getTime() - nowMs) / 1e3;
+      }
+    }
+    if (typeof info.reset_in_seconds === "number" && Number.isFinite(info.reset_in_seconds)) {
+      resetSec = info.reset_in_seconds;
+      if (!resetAt) resetAt = new Date(nowMs + Math.max(0, info.reset_in_seconds) * 1e3);
+    }
+
+    const idLower = bucketId.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+    let windowType = null;
+    if (/(?:^|[-_\s.])(weekly|week|7d|7[-_]?days?|seven[-_]?days?)(?:$|[-_\s.])/.test(idLower)) {
+      windowType = "sevenDay";
+    } else if (/(?:^|[-_\s.])(5h|5hr|5[-_]?hours?|five[-_]?hours?|short|hourly|session|rolling)(?:$|[-_\s.])/.test(idLower)) {
+      windowType = "fiveHour";
+    } else if (resetSec != null && Number.isFinite(resetSec) && resetSec >= 0) {
+      windowType = resetSec <= 21600 ? "fiveHour" : "sevenDay";
+    }
+    if (!windowType) continue;
+
+    const score = familyMatchScore(idLower);
+    if (score === 0) continue;
+
+    const rem = Math.max(0, Math.min(1, info.remaining_fraction));
+    const percentUsed = (1 - rem) * 100;
+    const entry = {
+      score,
+      block: {
+        resetAt,
+        percentUsed,
+        isOverLimit: percentUsed >= 100
+      }
+    };
+    if (windowType === "fiveHour") fiveHourCandidates.push(entry);
+    else sevenDayCandidates.push(entry);
+  }
+
+  const pickBest = (list) => {
+    if (list.length === 0) return null;
+    list.sort((a, b) => (b.score - a.score) || (b.block.percentUsed - a.block.percentUsed));
+    return list[0].block;
+  };
+
+  const fiveHour = pickBest(fiveHourCandidates);
+  const sevenDay = pickBest(sevenDayCandidates);
+  if (!fiveHour && !sevenDay) return null;
+  return { fiveHour, sevenDay };
+}
 async function fetchUsageFromAPI(token) {
   try {
     const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
@@ -472,7 +564,14 @@ function writeFileAtomic(filePath, data) {
 // previous value): it drives the ↑↓ arrows and the prognosis segment (ETA + sparkline).
 var HISTORY_MAX = 30;
 var HISTORY_MIN_GAP_MS = 60 * 1000;
+var _antigravityStateKey = null;
+function antigravityStatePath(base) {
+  return path2.join(os2.homedir(), ".gemini", "antigravity-cli", `${base}.${_antigravityStateKey}.json`);
+}
 function getHistoryPath() {
+  if (_antigravityStateKey !== null) {
+    return antigravityStatePath(".statusline-history");
+  }
   return accountStatePath(".statusline-history");
 }
 
@@ -764,7 +863,10 @@ async function _getRealtimeUsageInner(pollIntervalMinutes) {
 }
 
 // src/utils/token-breakdown.ts
-var TOKENS_CACHE_PATH = path2.join(os2.homedir(), ".claude", ".statusline-tokens.json");
+function getTokensCachePath() {
+  if (_antigravityStateKey !== null) return antigravityStatePath(".statusline-tokens");
+  return path2.join(os2.homedir(), ".claude", ".statusline-tokens.json");
+}
 
 function _approxTokens(content) {
   let chars = 0;
@@ -798,7 +900,7 @@ function computeTokenBreakdown(transcriptPath) {
     const stat = fs2.statSync(transcriptPath);
     const mtime = stat.mtimeMs, size = stat.size;
     let cache = null;
-    try { cache = JSON.parse(fs2.readFileSync(TOKENS_CACHE_PATH, "utf-8")); } catch {}
+    try { cache = JSON.parse(fs2.readFileSync(getTokensCachePath(), "utf-8")); } catch {}
     // v2 = byte offsets; older caches stored char offsets (and possibly double-counted
     // sums), so reparse from scratch instead of resuming from them.
     if (cache?.v !== 2) cache = null;
@@ -842,7 +944,7 @@ function computeTokenBreakdown(transcriptPath) {
       }
     }
     const result = sums;
-    writeFileAtomic(TOKENS_CACHE_PATH, JSON.stringify({
+    writeFileAtomic(getTokensCachePath(), JSON.stringify({
       v: 2, path: transcriptPath, mtime, size, offset: offset + consumed, sums, idName, result
     }));
     return result;
@@ -850,13 +952,17 @@ function computeTokenBreakdown(transcriptPath) {
 }
 
 // src/utils/aggregate.ts
-var SESSIONS_PATH = path2.join(os2.homedir(), ".claude", ".statusline-sessions.json");
+function getSessionsPath() {
+  if (_antigravityStateKey !== null) return antigravityStatePath(".statusline-sessions");
+  return path2.join(os2.homedir(), ".claude", ".statusline-sessions.json");
+}
 
 // Returns {} when the file is missing, null when it exists but is unreadable/corrupt.
 function _loadSessions() {
   try {
-    if (!fs2.existsSync(SESSIONS_PATH)) return {};
-    const o = JSON.parse(fs2.readFileSync(SESSIONS_PATH, "utf-8"));
+    const sessionsPath = getSessionsPath();
+    if (!fs2.existsSync(sessionsPath)) return {};
+    const o = JSON.parse(fs2.readFileSync(sessionsPath, "utf-8"));
     return (o && typeof o === "object") ? o : null;
   } catch (e) { debug("sessions load error:", e); return null; }
 }
@@ -885,7 +991,7 @@ function upsertAndAggregate(sessionId, costUsd, ctxTokens, ttlMs) {
     count++; totalCost += e.cost || 0; totalCtx += e.ctx || 0; totalRate += e.tokRate || 0;
   }
   if (canWrite) {
-    try { writeFileAtomic(SESSIONS_PATH, JSON.stringify(map)); }
+    try { writeFileAtomic(getSessionsPath(), JSON.stringify(map)); }
     catch (e) { debug("sessions write error:", e); }
   }
   return { count, totalCost, totalCtx, totalRate };
@@ -898,15 +1004,17 @@ function _fmtTokens(n) {
 
 // src/segments/block.ts
 var BlockProvider = class {
-  async getBlockInfo(pollInterval, stdinUsage) {
+  async getBlockInfo(pollInterval, stdinUsage, allowApiFallback = true) {
     if (stdinUsage?.fiveHour) {
       const fiveHour = stdinUsage.fiveHour;
       const now = /* @__PURE__ */ new Date();
-      const resetAt = new Date(fiveHour.resetAt);
-      const timeRemaining = Math.max(
-        0,
-        Math.round((resetAt.getTime() - now.getTime()) / (1e3 * 60))
-      );
+      const resetAt = fiveHour.resetAt ? new Date(fiveHour.resetAt) : null;
+      const timeRemaining = resetAt
+        ? Math.max(
+            0,
+            Math.round((resetAt.getTime() - now.getTime()) / (1e3 * 60))
+          )
+        : null;
       debug(
         `Block segment (stdin): ${fiveHour.percentUsed}% used, ${timeRemaining}m remaining`
       );
@@ -915,6 +1023,14 @@ var BlockProvider = class {
         resetAt: fiveHour.resetAt,
         timeRemaining,
         isRealtime: true
+      };
+    }
+    if (!allowApiFallback) {
+      return {
+        percentUsed: null,
+        resetAt: null,
+        timeRemaining: null,
+        isRealtime: false
       };
     }
     const realtimeInfo = await this.getRealtimeBlockInfo(pollInterval);
@@ -979,11 +1095,13 @@ var WeeklyProvider = class {
     const progress = Math.max(0, Math.min(100, elapsedMs / totalMs * 100));
     return Math.round(progress);
   }
-  async getWeeklyInfo(pollInterval, stdinUsage, needPerModel) {
+  async getWeeklyInfo(pollInterval, stdinUsage, needPerModel, allowApiFallback = true) {
     let stdinInfo = null;
     if (stdinUsage?.sevenDay) {
       const sevenDay = stdinUsage.sevenDay;
-      const weekProgressPercent = this.calculateWeekProgressFromResetTime(sevenDay.resetAt);
+      const weekProgressPercent = sevenDay.resetAt
+        ? this.calculateWeekProgressFromResetTime(sevenDay.resetAt)
+        : null;
       debug(`Weekly segment (stdin): ${sevenDay.percentUsed}% used`);
       stdinInfo = {
         percentUsed: sevenDay.percentUsed,
@@ -996,6 +1114,18 @@ var WeeklyProvider = class {
         sonnetResetAt: null
       };
       if (!needPerModel) return stdinInfo;
+    }
+    if (!allowApiFallback) {
+      return stdinInfo ?? {
+        percentUsed: null,
+        resetAt: null,
+        isRealtime: false,
+        weekProgressPercent: null,
+        opusPercentUsed: null,
+        sonnetPercentUsed: null,
+        opusResetAt: null,
+        sonnetResetAt: null
+      };
     }
     const realtimeInfo = await this.getRealtimeWeeklyInfo(pollInterval);
     if (realtimeInfo) {
@@ -1213,9 +1343,13 @@ function getTheme(name) {
 }
 
 // src/utils/terminal.ts
+var _hookTerminalWidth = null;
 function getTerminalWidth() {
   const envCols = parseInt(process.env.COLUMNS || "", 10);
   if (Number.isFinite(envCols) && envCols > 0) return envCols;
+  if (typeof _hookTerminalWidth === "number" && Number.isFinite(_hookTerminalWidth) && _hookTerminalWidth > 0) {
+    return _hookTerminalWidth;
+  }
   return process.stdout.columns || 80;
 }
 function isWide(cp) {
@@ -1498,7 +1632,7 @@ var Renderer = class {
     } else {
       text = `${Math.round(percent)}%${trend}`;
     }
-    if (showWeekProgress && !ctx.compact) {
+    if (showWeekProgress && info.weekProgressPercent != null && !ctx.compact) {
       text += ` (\u043D\u0435\u0434 ${info.weekProgressPercent}%)`;
     }
     return {
@@ -1887,6 +2021,9 @@ function getClaudeModel(hookData) {
   if (hookData?.model?.id) {
     return formatModelName(hookData.model.id, hookData.model.display_name);
   }
+  if (isAntigravityHook(hookData)) {
+    return hookData?.model?.display_name ? formatModelName(null, hookData.model.display_name) : null;
+  }
   const model = process.env.CLAUDE_MODEL || process.env.CLAUDE_CODE_MODEL || process.env.ANTHROPIC_MODEL;
   if (model) {
     return formatModelName(model);
@@ -1899,32 +2036,52 @@ function getContextPercent(hookData) {
   if (typeof pre === "number" && Number.isFinite(pre)) {
     return Math.round(pre);
   }
+  if (isAntigravityHook(hookData)) {
+    const rem = ctx?.remaining_percentage;
+    if (typeof rem === "number" && Number.isFinite(rem)) {
+      return Math.round(Math.max(0, Math.min(100, 100 - rem)));
+    }
+  }
   if (!ctx?.current_usage || !ctx.context_window_size) {
+    if (isAntigravityHook(hookData) && typeof ctx?.total_input_tokens === "number" && ctx?.context_window_size > 0) {
+      return Math.round(Math.max(0, Math.min(100, ctx.total_input_tokens / ctx.context_window_size * 100)));
+    }
     return 0;
   }
   const usage = ctx.current_usage;
   const totalTokens = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
   return Math.round(totalTokens / ctx.context_window_size * 100);
 }
-function getEnvironmentInfo(hookData, config) {
+function getEnvironmentInfo(hookData, config, antigravityUsage = null) {
   const gitEnabled = config?.git?.enabled ?? true;
   const gitCwd = getGitCwd(hookData);
+  const isAntigravity = isAntigravityHook(hookData);
   return {
     directory: getDirectoryName(hookData),
     gitBranch: gitEnabled ? getGitBranch(gitCwd) : null,
     gitDirty: gitEnabled ? hasGitChanges(gitCwd) : false,
     model: getClaudeModel(hookData),
     contextPercent: getContextPercent(hookData),
-    hasRateLimits: !!(hookData?.rate_limits?.five_hour || hookData?.rate_limits?.seven_day),
-    costUsd: typeof hookData?.cost?.total_cost_usd === "number" ? hookData.cost.total_cost_usd : null,
+    hasRateLimits: isAntigravity
+      ? !!(antigravityUsage?.fiveHour || antigravityUsage?.sevenDay)
+      : !!(hookData?.rate_limits?.five_hour || hookData?.rate_limits?.seven_day),
+    costUsd: typeof hookData?.cost?.total_cost_usd === "number"
+      ? hookData.cost.total_cost_usd
+      : (isAntigravity && typeof hookData?.cost?.total_usd === "number" ? hookData.cost.total_usd : null),
     linesAdded: hookData?.cost?.total_lines_added ?? null,
     linesRemoved: hookData?.cost?.total_lines_removed ?? null,
-    effortLevel: hookData?.effort?.level ?? null,
+    effortLevel: hookData?.effort?.level ?? (isAntigravity ? (hookData?.model?.effort ?? null) : null),
     thinkingEnabled: hookData?.thinking?.enabled ?? null,
     transcriptPath: hookData?.transcript_path ?? null,
-    fiveHourPercent: hookData?.rate_limits?.five_hour?.used_percentage ?? null,
-    sevenDayPercent: hookData?.rate_limits?.seven_day?.used_percentage ?? null,
-    fiveHourResetAt: hookData?.rate_limits?.five_hour?.resets_at ?? null,
+    fiveHourPercent: isAntigravity
+      ? (antigravityUsage?.fiveHour?.percentUsed ?? null)
+      : (hookData?.rate_limits?.five_hour?.used_percentage ?? null),
+    sevenDayPercent: isAntigravity
+      ? (antigravityUsage?.sevenDay?.percentUsed ?? null)
+      : (hookData?.rate_limits?.seven_day?.used_percentage ?? null),
+    fiveHourResetAt: isAntigravity
+      ? (antigravityUsage?.fiveHour?.resetAt ? Math.floor(antigravityUsage.fiveHour.resetAt.getTime() / 1e3) : null)
+      : (hookData?.rate_limits?.five_hour?.resets_at ?? null),
     sessionId: hookData?.session_id ?? null,
     ctxTokens: (() => {
       const u = hookData?.context_window?.current_usage;
@@ -1941,26 +2098,36 @@ async function main() {
     debug("Config loaded:", JSON.stringify(config));
     const hookData = await readHookData();
     debug("Hook data:", JSON.stringify(hookData));
-    const envInfo = getEnvironmentInfo(hookData, config);
+    const isAntigravity = isAntigravityHook(hookData);
+    if (isAntigravity) {
+      if (typeof hookData?.terminal_width === "number" && Number.isFinite(hookData.terminal_width) && hookData.terminal_width > 0) {
+        _hookTerminalWidth = hookData.terminal_width;
+      }
+      _antigravityStateKey = hookData?.email
+        ? crypto.createHash("sha256").update(String(hookData.email).toLowerCase()).digest("hex").slice(0, 16)
+        : "default";
+    }
+    const stdinUsage = isAntigravity ? buildUsageFromAntigravity(hookData) : buildUsageFromHook(hookData);
+    const envInfo = getEnvironmentInfo(hookData, config, isAntigravity ? stdinUsage : null);
     debug("Environment info:", JSON.stringify(envInfo));
     const blockProvider = new BlockProvider();
     const weeklyProvider = new WeeklyProvider();
     const pollInterval = config.budget?.pollInterval ?? 15;
-    const stdinUsage = buildUsageFromHook(hookData);
-    const needPerModel = config.weekly?.enabled && config.weekly?.viewMode === "smart" && (envInfo.model || "").toLowerCase().includes("sonnet");
+    const needPerModel = !isAntigravity && config.weekly?.enabled && config.weekly?.viewMode === "smart" && (envInfo.model || "").toLowerCase().includes("sonnet");
     const [blockInfo, weeklyInfo] = await Promise.all([
-      config.block?.enabled ? blockProvider.getBlockInfo(pollInterval, stdinUsage) : null,
+      config.block?.enabled ? blockProvider.getBlockInfo(pollInterval, stdinUsage, !isAntigravity) : null,
       config.weekly?.enabled ? weeklyProvider.getWeeklyInfo(
         pollInterval,
         stdinUsage,
-        needPerModel
+        needPerModel,
+        !isAntigravity
       ) : null
     ]);
     debug("Block info:", JSON.stringify(blockInfo));
     debug("Weekly info:", JSON.stringify(weeklyInfo));
-    let trendInfo = config.showTrend ? getUsageTrend() : null;
-    removeLegacyStateFiles();
-    const hist =appendHistory(envInfo.fiveHourPercent, envInfo.sevenDayPercent);
+    let trendInfo = (!isAntigravity && config.showTrend) ? getUsageTrend() : null;
+    if (!isAntigravity) removeLegacyStateFiles();
+    const hist = appendHistory(envInfo.fiveHourPercent, envInfo.sevenDayPercent);
     if (hist && hist.length >= 2) {
       if (!trendInfo || typeof trendInfo !== "object") {
         trendInfo = { fiveHourTrend: null, sevenDayTrend: null, sevenDayOpusTrend: null, sevenDaySonnetTrend: null };

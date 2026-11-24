@@ -1,6 +1,6 @@
 # MorgottStatusLine
 
-Строка состояния для Claude Code: рабочая директория, модель, заполнение контекста и лимиты подписки за 5 часов и неделю. Время отображается по-русски.
+Строка состояния для Claude Code и Antigravity CLI: рабочая директория, модель, заполнение контекста и лимиты подписки за 5 часов и неделю. Время отображается по-русски.
 
 ![Пример строки состояния](preview.png)
 
@@ -52,6 +52,23 @@ npm i -g .
 ```
 
 Команда `morgott-statusline` должна быть доступна через `PATH` процесса Claude Code. После установки перезапустите Claude Code.
+
+### Antigravity CLI
+
+После установки пакета добавьте ключ `statusLine` в `~/.gemini/antigravity-cli/settings.json`, сохранив остальные настройки:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "morgott-statusline"
+  }
+}
+```
+
+Если команда `morgott-statusline` не в `PATH`, укажите полный путь, как описано выше (например, `node "<путь>/dist/index.js"`).
+
+В режиме Antigravity CLI (`product: "antigravity"`) отображаются рабочая директория, модель, заполнение контекста и квоты за 5 часов и неделю из входных данных CLI (без запросов к Anthropic API). Оформление берётся из того же `claude-limitline.json`, а служебные файлы состояния хранятся изолированно в `~/.gemini/antigravity-cli/.statusline-*.<account>.json`.
 
 ## Настройки
 
@@ -155,7 +172,7 @@ npm uninstall -g morgott-statusline
 npm uninstall -g --prefix "$HOME/.local" morgott-statusline
 ```
 
-При необходимости отдельно удалите свои файлы `claude-limitline.json` и `.claude-limitline.json`, а также служебные файлы `~/.claude/.statusline-*`. Перезапустите Claude Code.
+При необходимости отдельно удалите свои файлы `claude-limitline.json` и `.claude-limitline.json`, а также служебные файлы `~/.claude/.statusline-*` (и `~/.gemini/antigravity-cli/.statusline-*` / ключ `statusLine` в `~/.gemini/antigravity-cli/settings.json`, если настраивали Antigravity CLI). Перезапустите CLI.
 
 ## Лицензия
 
